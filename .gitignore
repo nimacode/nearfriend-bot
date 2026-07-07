@@ -1,0 +1,13 @@
+# Editor / OS junk
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Local env / secrets
+.env
+
+# Build output
+nearfriend-bot
+*.test
+*.out
