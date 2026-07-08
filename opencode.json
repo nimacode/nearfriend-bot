@@ -1,0 +1,17 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "myprovider": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Liara",
+      "options": {
+        "baseURL": "https://ai.liara.ir/api/6a4dc30d5fb80335e03a0ebb/v1"
+      },
+      "models": {
+        "minimax/minimax-m3": {
+          "name": "MiniMaxM3"
+        }
+      }
+    }
+  }
+}

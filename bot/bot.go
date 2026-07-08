@@ -6,10 +6,12 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-// Bot wraps the Telegram API client plus our state and storage.
+// Bot wraps the Telegram API client plus our state, storage, and
+// optional translation client.
 type Bot struct {
-	api     *tgbotapi.BotAPI
-	storage *Storage
+	api       *tgbotapi.BotAPI
+	storage   *Storage
+	translate *TranslateClient
 }
 
 // New creates the bot but does not start polling. Call Run() to start.
@@ -25,6 +27,11 @@ func New(token string) (*Bot, error) {
 	}, nil
 }
 
+// SetTranslate attaches a translation client. nil disables translation.
+func (b *Bot) SetTranslate(t *TranslateClient) {
+	b.translate = t
+}
+
 // Self exposes the underlying bot user (handy for logging).
 func (b *Bot) Self() tgbotapi.User {
 	return b.api.Self
@@ -33,9 +40,11 @@ func (b *Bot) Self() tgbotapi.User {
 // Run starts the long-poll loop. Blocks until the process is killed.
 func (b *Bot) Run() {
 	u := tgbotapi.NewUpdate(0)
-	u.Timeout = 60 // seconds Telegram holds the long-poll open
+	u.Timeout = 50 // Telegram's max long-poll window
 
 	updates := b.api.GetUpdatesChan(u)
+
+	b.startWorkers()
 
 	for upd := range updates {
 		b.routeUpdate(upd)
@@ -47,10 +56,14 @@ func (b *Bot) routeUpdate(upd tgbotapi.Update) {
 	switch {
 	case upd.Message != nil:
 		b.handleMessage(upd.Message)
+	case upd.EditedMessage != nil:
+		// Live location updates come through here. Treat them like any
+		// other message from the user — if they're in a chat, relay.
+		b.handleMessage(upd.EditedMessage)
 	case upd.CallbackQuery != nil:
 		b.handleCallback(upd.CallbackQuery)
 	default:
-		// ignore edits, inline queries, etc.
+		// ignore inline queries, etc.
 	}
 }
 

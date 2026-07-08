@@ -4,7 +4,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/yourname/nearfriend-bot/bot"
+	"github.com/nimacode/nearfriend-bot/bot"
 )
 
 func main() {
@@ -17,6 +17,13 @@ func main() {
 	b, err := bot.New(token)
 	if err != nil {
 		log.Fatalf("[nearfriend] failed to create bot: %v", err)
+	}
+
+	if url := os.Getenv("TRANSLATION_API_URL"); url != "" {
+		b.SetTranslate(bot.NewTranslateClient(url, os.Getenv("TRANSLATION_API_KEY")))
+		log.Printf("[nearfriend] chat translation enabled (%s)", url)
+	} else {
+		log.Printf("[nearfriend] chat translation disabled (set TRANSLATION_API_URL to enable)")
 	}
 
 	me := b.Self()
