@@ -23,11 +23,23 @@ func (b *Bot) chatTimerLoop() {
 	defer ticker.Stop()
 	for range ticker.C {
 		now := time.Now()
-		expired := []int64{}
+		var expired []int64
+		seen := make(map[int64]bool)
 		b.storage.Range(func(u *User) {
-			if !u.ChatEndsAt.IsZero() && now.After(u.ChatEndsAt) {
-				expired = append(expired, u.ID)
+			if u.ChatEndsAt.IsZero() || !now.After(u.ChatEndsAt) {
+				return
 			}
+			// Process each pair only once: when the first side is
+			// collected, mark its partner as already handled so we
+			// don't send the "time's up" prompt twice.
+			if seen[u.ID] {
+				return
+			}
+			seen[u.ID] = true
+			if u.PartnerID != 0 {
+				seen[u.PartnerID] = true
+			}
+			expired = append(expired, u.ID)
 		})
 		for _, uid := range expired {
 			b.endCoffeeChat(uid)
@@ -36,34 +48,39 @@ func (b *Bot) chatTimerLoop() {
 }
 
 // endCoffeeChat handles the timer-expiry branch: notify both sides and
-// return them to idle (but preserve the chat if they both agree to
-// continue — handled by handleCommand "continuechat" callback).
+// offer them a "continue?" prompt while keeping them in the chat.
+//
+// Each lock acquisition is done as a separate, non-nested call.
+// Calling Get/Upsert/WithUser from inside another WithUser callback
+// would self-deadlock because sync.RWMutex is not re-entrant.
 func (b *Bot) endCoffeeChat(userID int64) {
-	b.storage.WithUser(userID, func(u *User) {
-		if u.PartnerID == 0 || u.State != StateInChat {
-			u.ChatEndsAt = time.Time{}
-			u.IsCoffeeChat = false
-			return
-		}
+	var partnerID int64
 
-		// Reset timer but keep both in chat; offer a "continue?" prompt.
-		partnerID := u.PartnerID
+	b.storage.WithUser(userID, func(u *User) {
+		// Always clear our own timer.
 		u.ChatEndsAt = time.Time{}
 		u.IsCoffeeChat = false
-
-		b.sendText(u.ID,
-			"⏰ *Coffee time's up!*\nWould you like to keep chatting?",
-			continueKeyboard(partnerID, true), true)
-
-		if p, ok := b.storage.Get(partnerID); ok {
-			p.ChatEndsAt = time.Time{}
-			p.IsCoffeeChat = false
-			b.storage.Upsert(p)
-			b.sendText(partnerID,
-				"⏰ *Coffee time's up!*\nWould you like to keep chatting?",
-				continueKeyboard(u.ID, false), true)
+		if u.PartnerID == 0 || u.State != StateInChat {
+			return
 		}
+		partnerID = u.PartnerID
 	})
+	if partnerID == 0 {
+		return
+	}
+
+	// Clear the partner's timer in its own critical section.
+	b.storage.WithUser(partnerID, func(p *User) {
+		p.ChatEndsAt = time.Time{}
+		p.IsCoffeeChat = false
+	})
+
+	b.sendText(userID,
+		"⏰ *Coffee time's up!*\nWould you like to keep chatting?",
+		continueKeyboard(partnerID, true), true)
+	b.sendText(partnerID,
+		"⏰ *Coffee time's up!*\nWould you like to keep chatting?",
+		continueKeyboard(userID, false), true)
 }
 
 // notifyLoop runs every 5 minutes and pings users who opted in to
@@ -78,7 +95,15 @@ func (b *Bot) notifyLoop() {
 
 func (b *Bot) checkAndNotify() {
 	now := time.Now()
-	notified := 0
+	type pendingNotification struct {
+		id   int64
+		name string
+		dist float64
+	}
+	var pending []pendingNotification
+
+	// Range holds only the read lock, so we must not mutate users here.
+	// Collect the notifications first, then update state afterwards.
 	b.storage.Range(func(u *User) {
 		if !u.NotifyWhenNearby {
 			return
@@ -118,16 +143,26 @@ func (b *Bot) checkAndNotify() {
 			}
 		}
 
-		b.sendText(u.ID,
+		pending = append(pending, pendingNotification{
+			id:   u.ID,
+			name: shortName(best),
+			dist: bestDist,
+		})
+	})
+
+	for _, p := range pending {
+		b.sendText(p.id,
 			"🔔 *Someone new is nearby!*\n"+
-				"👤 "+shortName(best)+" · "+
-				formatDistance(bestDist)+" away\n\n"+
+				"👤 "+p.name+" · "+
+				formatDistance(p.dist)+" away\n\n"+
 				"Tap *Find nearby friends* to connect!",
 			nil, true)
-		u.LastNotifiedAt = now
-		notified++
-	})
-	if notified > 0 {
-		log.Printf("[notify] pinged %d users", notified)
+		// Stamp the cooldown under the write lock.
+		b.storage.WithUser(p.id, func(x *User) {
+			x.LastNotifiedAt = now
+		})
+	}
+	if len(pending) > 0 {
+		log.Printf("[notify] pinged %d users", len(pending))
 	}
 }

@@ -13,9 +13,9 @@ import (
 
 // TranslationResult is the parsed response from a translation API.
 type TranslationResult struct {
-	TranslatedText string `json:"translatedText"`
+	TranslatedText   string `json:"translatedText"`
 	DetectedLanguage struct {
-		Language string  `json:"language"`
+		Language   string  `json:"language"`
 		Confidence float64 `json:"confidence"`
 	} `json:"detectedLanguage"`
 }

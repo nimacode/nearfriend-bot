@@ -108,6 +108,12 @@ func (b *Bot) handleCommand(msg *tgbotapi.Message) {
 }
 
 func (b *Bot) handleCallback(cq *tgbotapi.CallbackQuery) {
+	// For inaccessible (very old) messages Telegram sends no Message.
+	// Guard against a nil-dereference panic in the handlers below.
+	if cq.Message == nil {
+		b.answerCallback(cq.ID, "This button is no longer available.")
+		return
+	}
 	data := cq.Data
 	parts := strings.SplitN(data, ":", 3)
 
@@ -212,7 +218,7 @@ func (b *Bot) onLocation(msg *tgbotapi.Message) {
 	u.LocationAt = time.Now()
 
 	if u.State == StateNeedLocation {
-		u.State = StateIdle
+		u.State = StateNeedGender
 		b.storage.Upsert(u)
 
 		b.sendText(msg.Chat.ID,
@@ -702,10 +708,10 @@ func (b *Bot) onEndHereButton(cq *tgbotapi.CallbackQuery, partnerIDStr string) {
 
 func (b *Bot) endChat(userID, chatID int64, notifyPartner bool) {
 	var (
-		partnerID     int64
-		partnerCopy   *User
-		wasCoffeeChat bool
-		partnerLang   string
+		partnerID        int64
+		partnerCopy      *User
+		wasCoffeeChat    bool
+		partnerWasCoffee bool
 	)
 	u, ok := b.storage.Get(userID)
 	if !ok {
@@ -720,7 +726,9 @@ func (b *Bot) endChat(userID, chatID int64, notifyPartner bool) {
 	wasCoffeeChat = u.IsCoffeeChat
 	if p, ok := b.storage.Get(partnerID); ok {
 		partnerCopy = p
-		partnerLang = p.Language
+		// Capture the coffee flag before we clear it below — needed for
+		// the "Coffee Lover" achievement check.
+		partnerWasCoffee = p.IsCoffeeChat
 		b.storage.WithUser(partnerID, func(x *User) {
 			x.PartnerID = 0
 			x.State = StateIdle
@@ -747,12 +755,12 @@ func (b *Bot) endChat(userID, chatID int64, notifyPartner bool) {
 		if partnerCopy != nil {
 			x.ChatCount++
 		}
-		newlyU = checkAchievements(x, partnerCopy, now)
+		newlyU = checkAchievements(x, partnerCopy, now, wasCoffeeChat)
 	})
 	if partnerCopy != nil {
 		b.storage.WithUser(partnerID, func(x *User) {
 			x.ChatCount++
-			newlyP = checkAchievements(x, u, now)
+			newlyP = checkAchievements(x, u, now, partnerWasCoffee)
 		})
 	}
 
@@ -780,9 +788,6 @@ func (b *Bot) endChat(userID, chatID int64, notifyPartner bool) {
 			"Chat ended. Tap *Find nearby friends* to start a new one.",
 			mainMenu, true)
 	}
-
-	_ = wasCoffeeChat
-	_ = partnerLang
 
 	// Notify about new achievements.
 	for _, a := range newlyU {
@@ -872,7 +877,7 @@ func (b *Bot) onRateAction(cq *tgbotapi.CallbackQuery, parts []string) {
 		x.RatedBy[cq.From.ID] = true
 		x.RatingSum += stars
 		x.RatingCount++
-		newAch = checkAchievements(x, u, time.Now())
+		newAch = checkAchievements(x, u, time.Now(), false)
 	})
 
 	b.storage.WithUser(cq.From.ID, func(x *User) {

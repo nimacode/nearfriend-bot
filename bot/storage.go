@@ -12,13 +12,13 @@ import (
 type State int
 
 const (
-	StateIdle        State = iota // registered, waiting for a menu choice
-	StateNeedLocation             // just /start'd, waiting for location share
-	StateNeedGender               // location received, waiting for self gender
-	StateNeedSearchGender         // in "find nearby" flow, waiting for who they want
-	StateNeedRadius               // in "find nearby" flow, waiting for distance
-	StateBrowsing                 // looking at the inline list of nearby users
-	StateInChat                   // paired with another user, relaying messages
+	StateIdle             State = iota // registered, waiting for a menu choice
+	StateNeedLocation                  // just /start'd, waiting for location share
+	StateNeedGender                    // location received, waiting for self gender
+	StateNeedSearchGender              // in "find nearby" flow, waiting for who they want
+	StateNeedRadius                    // in "find nearby" flow, waiting for distance
+	StateBrowsing                      // looking at the inline list of nearby users
+	StateInChat                        // paired with another user, relaying messages
 
 	// Profile setup (entered via menu)
 	StateNeedAlias
@@ -110,15 +110,15 @@ var CommonTimezones = []string{
 
 // Achievement IDs.
 const (
-	AchievementFirstChat  = "first_chat"
-	AchievementMultiCity  = "multi_city"
-	AchievementNightOwl   = "night_owl"
-	AchievementFiveStar   = "five_star"
-	AchievementChatterbox = "chatterbox"
-	AchievementPolyglot   = "polyglot"
-	AchievementEarlyBird  = "early_bird"
-	AchievementExplorer   = "explorer"
-	AchievementWellLiked  = "well_liked"
+	AchievementFirstChat   = "first_chat"
+	AchievementMultiCity   = "multi_city"
+	AchievementNightOwl    = "night_owl"
+	AchievementFiveStar    = "five_star"
+	AchievementChatterbox  = "chatterbox"
+	AchievementPolyglot    = "polyglot"
+	AchievementEarlyBird   = "early_bird"
+	AchievementExplorer    = "explorer"
+	AchievementWellLiked   = "well_liked"
 	AchievementCoffeeLover = "coffee_lover"
 )
 
@@ -195,8 +195,8 @@ type User struct {
 	WakeTo   int
 
 	// Chat timer (for coffee chat)
-	ChatEndsAt    time.Time
-	IsCoffeeChat  bool
+	ChatEndsAt   time.Time
+	IsCoffeeChat bool
 
 	// Notifications
 	NotifyWhenNearby bool
@@ -221,7 +221,7 @@ type User struct {
 	LangPartners map[string]bool  // partner languages we've chatted with
 
 	// Per-search state
-	IsCoffeeSearch   bool // user picked ☕ for this search
+	IsCoffeeSearch   bool  // user picked ☕ for this search
 	PendingRatingFor int64 // non-zero: bot is waiting on a rating for this partner
 }
 
@@ -246,9 +246,9 @@ func formatFloat(f float64) string {
 // Storage is a tiny in-memory key/value store. Thread-safe.
 // For production swap with SQLite/Postgres/Redis — the interface is tiny.
 type Storage struct {
-	mu       sync.RWMutex
-	users    map[int64]*User
-	reports  map[int64]int // userID -> active report count
+	mu      sync.RWMutex
+	users   map[int64]*User
+	reports map[int64]int // userID -> active report count
 }
 
 func NewStorage() *Storage {

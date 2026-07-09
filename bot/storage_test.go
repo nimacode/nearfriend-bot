@@ -293,7 +293,7 @@ func TestIncrementReport(t *testing.T) {
 func TestAchievementFirstChat(t *testing.T) {
 	u := &User{ChatCount: 1, Achievements: map[string]bool{}}
 	now := time.Now()
-	granted := checkAchievements(u, nil, now)
+	granted := checkAchievements(u, nil, now, false)
 	if !u.HasAchievement(AchievementFirstChat) {
 		t.Error("ChatCount=1 should grant FirstChat")
 	}
@@ -311,8 +311,8 @@ func TestAchievementFirstChat(t *testing.T) {
 func TestAchievementNoDuplicates(t *testing.T) {
 	u := &User{ChatCount: 5, Achievements: map[string]bool{}}
 	now := time.Now()
-	first := checkAchievements(u, nil, now)
-	second := checkAchievements(u, nil, now)
+	first := checkAchievements(u, nil, now, false)
+	second := checkAchievements(u, nil, now, false)
 	if len(second) != 0 {
 		t.Errorf("second pass should grant no new achievements, got %d", len(second))
 	}
@@ -325,7 +325,7 @@ func TestAchievementFiveStar(t *testing.T) {
 		Achievements: map[string]bool{},
 	}
 	now := time.Now()
-	granted := checkAchievements(u, nil, now)
+	granted := checkAchievements(u, nil, now, false)
 	found := false
 	for _, a := range granted {
 		if a.ID == AchievementFiveStar {
@@ -343,7 +343,7 @@ func TestAchievementWellLiked(t *testing.T) {
 		Achievements: map[string]bool{},
 	}
 	now := time.Now()
-	granted := checkAchievements(u, nil, now)
+	granted := checkAchievements(u, nil, now, false)
 	found := false
 	for _, a := range granted {
 		if a.ID == AchievementWellLiked {
@@ -364,7 +364,7 @@ func TestAchievementCities(t *testing.T) {
 		Achievements: map[string]bool{},
 	}
 	now := time.Now()
-	granted := checkAchievements(u, nil, now)
+	granted := checkAchievements(u, nil, now, false)
 	found := false
 	for _, a := range granted {
 		if a.ID == AchievementMultiCity {
@@ -373,6 +373,67 @@ func TestAchievementCities(t *testing.T) {
 	}
 	if !found {
 		t.Error("3 distinct cities should grant MultiCity")
+	}
+}
+
+// TestAchievementCitiesRecordedBeforeCheck verifies that the current
+// partner's city is counted in the SAME call (regression for the
+// off-by-one where recording happened after the threshold checks).
+func TestAchievementCitiesRecordedBeforeCheck(t *testing.T) {
+	u := &User{
+		ChatCount:    2, // already had chats
+		Achievements: map[string]bool{},
+		CitiesChat: map[string]int64{ // 2 distinct cities so far
+			"35.5,51.5":  1,
+			"40.5,-74.5": 2,
+		},
+	}
+	// Partner from a brand-new (3rd) city bucket.
+	partner := &User{ID: 9, Latitude: 32.5, Longitude: 51.5}
+	now := time.Now()
+
+	granted := checkAchievements(u, partner, now, false)
+	if len(u.CitiesChat) != 3 {
+		t.Errorf("expected 3 cities recorded, got %d", len(u.CitiesChat))
+	}
+	found := false
+	for _, a := range granted {
+		if a.ID == AchievementMultiCity {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("3rd distinct city should grant MultiCity in the same call")
+	}
+}
+
+// TestAchievementCoffeeLover verifies that the coffee badge is granted
+// based on the completedCoffee flag (regression for the bug where
+// IsCoffeeChat was cleared before checkAchievements ran).
+func TestAchievementCoffeeLover(t *testing.T) {
+	u := &User{ChatCount: 1, Achievements: map[string]bool{}}
+	now := time.Now()
+
+	granted := checkAchievements(u, nil, now, true)
+	if !u.HasAchievement(AchievementCoffeeLover) {
+		t.Error("completedCoffee=true should grant CoffeeLover")
+	}
+	found := false
+	for _, a := range granted {
+		if a.ID == AchievementCoffeeLover {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("granted list should include CoffeeLover")
+	}
+
+	// Without the flag, it must NOT be granted.
+	u2 := &User{ChatCount: 1, Achievements: map[string]bool{}}
+	for _, a := range checkAchievements(u2, nil, now, false) {
+		if a.ID == AchievementCoffeeLover {
+			t.Error("completedCoffee=false should NOT grant CoffeeLover")
+		}
 	}
 }
 

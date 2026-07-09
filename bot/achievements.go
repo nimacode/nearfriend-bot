@@ -6,11 +6,35 @@ import (
 )
 
 // checkAchievements looks at the user's stats and grants any new
-// achievements. Returns a list of (achievement, justUnlocked) pairs the
-// caller can use to send notifications.
-func checkAchievements(u *User, partner *User, now time.Time) []Achievement {
+// achievements. Returns the list of achievements unlocked by this call
+// so the caller can send notifications.
+//
+// completedCoffee reports whether the chat that just ended (or the
+// event being evaluated) was a completed coffee chat — used for the
+// "Coffee Lover" badge, since u.IsCoffeeChat is cleared by the caller
+// before we run.
+func checkAchievements(u *User, partner *User, now time.Time, completedCoffee bool) []Achievement {
 	if u.Achievements == nil {
 		u.Achievements = make(map[string]bool)
+	}
+
+	// Record this conversation's data FIRST so the current partner's
+	// city/language counts toward the thresholds checked below (otherwise
+	// Globetrotter/Explorer/Polyglot would unlock one event too late).
+	if partner != nil {
+		if u.CitiesChat == nil {
+			u.CitiesChat = make(map[string]int64)
+		}
+		key := partner.CityKey()
+		if key != "" {
+			u.CitiesChat[key] = partner.ID
+		}
+		if partner.Language != "" {
+			if u.LangPartners == nil {
+				u.LangPartners = make(map[string]bool)
+			}
+			u.LangPartners[partner.Language] = true
+		}
 	}
 
 	var newlyUnlocked []Achievement
@@ -60,7 +84,7 @@ func checkAchievements(u *User, partner *User, now time.Time) []Achievement {
 		grant(AchievementEarlyBird)
 	}
 
-	// Five stars: received a 5/5
+	// Five stars: every rating received is a 5/5
 	if u.RatingCount > 0 && u.RatingSum == 5*u.RatingCount {
 		grant(AchievementFiveStar)
 	}
@@ -76,25 +100,8 @@ func checkAchievements(u *User, partner *User, now time.Time) []Achievement {
 	}
 
 	// Coffee lover: completed a coffee chat
-	if u.IsCoffeeChat {
+	if completedCoffee {
 		grant(AchievementCoffeeLover)
-	}
-
-	// Record the partner's city/language for future checks.
-	if partner != nil {
-		if u.CitiesChat == nil {
-			u.CitiesChat = make(map[string]int64)
-		}
-		key := partner.CityKey()
-		if key != "" {
-			u.CitiesChat[key] = partner.ID
-		}
-		if partner.Language != "" {
-			if u.LangPartners == nil {
-				u.LangPartners = make(map[string]bool)
-			}
-			u.LangPartners[partner.Language] = true
-		}
 	}
 
 	return newlyUnlocked

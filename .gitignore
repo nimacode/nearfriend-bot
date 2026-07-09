@@ -11,3 +11,8 @@
 nearfriend-bot
 *.test
 *.out
+
+# Python (stray venvs — this is a Go project)
+venv/
+.venv/
+path/

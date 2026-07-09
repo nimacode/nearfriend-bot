@@ -2,7 +2,6 @@ package bot
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -49,15 +48,6 @@ var chatKeyboard = tgbotapi.NewReplyKeyboard(
 var requestLocationKeyboard = tgbotapi.NewReplyKeyboard(
 	tgbotapi.NewKeyboardButtonRow(
 		tgbotapi.KeyboardButton{Text: "📎 Share my location", RequestLocation: true},
-	),
-)
-
-// requestLiveLocationKeyboard asks the user to share their live location
-// (15 min, 1h, or 8h — Telegram allows these via the attachment menu).
-// We provide a plain button and an explanatory hint.
-var requestLiveLocationKeyboard = tgbotapi.NewReplyKeyboard(
-	tgbotapi.NewKeyboardButtonRow(
-		tgbotapi.KeyboardButton{Text: "📎 Share my live location (15 min)", RequestLocation: true},
 	),
 )
 
@@ -174,20 +164,6 @@ func timezoneKeyboard() tgbotapi.InlineKeyboardMarkup {
 		for j := 0; j < 2 && i+j < len(CommonTimezones); j++ {
 			tz := CommonTimezones[i+j]
 			row = append(row, tgbotapi.NewInlineKeyboardButtonData(tz, "tz:"+tz))
-		}
-		rows = append(rows, row)
-	}
-	return tgbotapi.NewInlineKeyboardMarkup(rows...)
-}
-
-// hourKeyboard returns an hour picker (0-23). 6 per row.
-func hourKeyboard(prefix string) tgbotapi.InlineKeyboardMarkup {
-	var rows [][]tgbotapi.InlineKeyboardButton
-	for h := 0; h < 24; h += 6 {
-		var row []tgbotapi.InlineKeyboardButton
-		for i := 0; i < 6; i++ {
-			row = append(row, tgbotapi.NewInlineKeyboardButtonData(
-				strconv.Itoa(h+i), prefix+":"+strconv.Itoa(h+i)))
 		}
 		rows = append(rows, row)
 	}
