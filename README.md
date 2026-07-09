@@ -200,6 +200,61 @@ docker run -d --name nearfriend-bot --restart unless-stopped \
 
 ---
 
+## Deploy on Dokploy
+
+[Dokploy](https://dokploy.com) is a self-hosted PaaS (open-source Heroku/Vercel alternative). Since this is a **long-polling** bot, it needs **no domain, no exposed port, no HTTPS** — the bot reaches out to Telegram itself, so you can skip the whole *Domains* step.
+
+### 0. Install Dokploy (once per server)
+
+Requires a VPS (Ubuntu/Debian, ≥ 2 GB RAM) with ports **80 / 443 / 3000** free:
+
+```bash
+curl -sSL https://dokploy.com/install.sh | sh
+```
+
+Then open `http://YOUR_VPS_IP:3000` and create the admin account.
+
+### A. Application (Git + Dockerfile) — recommended
+
+Best for auto-deploy on every `git push`.
+
+1. **Services → Create → Application**
+2. **Source:** connect GitHub → pick `nearfriend-bot`, branch `main`
+3. **Build Type:** `Dockerfile` (auto-detected — it's already in the repo)
+4. **Environment** tab, add:
+   ```
+   TELEGRAM_BOT_TOKEN=123456789:ABCdef...
+   # TRANSLATION_API_URL=https://libretranslate.com/translate   (optional)
+   # TRANSLATION_API_KEY=your_key_if_required                    (optional)
+   ```
+5. **Deploy** → check the **Logs** tab:
+   ```
+   [nearfriend] bot @your_bot_username is online
+   ```
+
+To update later: just `git push` — Dokploy rebuilds and redeploys automatically (Auto Deploy webhook).
+
+### B. Docker Compose
+
+`docker-compose.yml` already uses `env_file: - .env`, which is exactly what Dokploy's Compose mode reads.
+
+1. **Services → Create → Docker Compose**
+2. Paste the contents of `docker-compose.yml` (or connect the repo)
+3. **Environment** tab: enter the same env vars (saved to `.env`)
+4. **Deploy**
+
+### What to skip / keep in mind
+
+| Item | For this bot |
+|------|--------------|
+| Domains / HTTPS | ❌ not needed (long-polling) |
+| Exposed port | ❌ not needed |
+| Outbound to `api.telegram.org` | ✅ must be allowed by the VPS |
+| Auto-restart | ✅ Dokploy handles it |
+| Persistence | ⚠️ in-memory — users are wiped on redeploy; add a real DB (Dokploy's *Databases* can host Postgres) and swap `bot/storage.go` |
+
+---
+
 ## How matching works (mutual consent)
 
 When user A searches for "Female, within 5 km", candidate B is shown **only if**:
