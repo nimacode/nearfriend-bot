@@ -127,6 +127,79 @@ You'll need **two Telegram accounts** (or a friend) to test matching:
 
 ---
 
+## Deploy with Docker (recommended)
+
+The fastest way to run the bot on a server. All you need is a token from [@BotFather](https://t.me/BotFather).
+
+### Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/) + [Docker Compose](https://docs.docker.com/compose/install/) (v2)
+
+### 1. Configure
+
+```bash
+git clone https://github.com/nimacode/nearfriend-bot.git
+cd nearfriend-bot
+
+cp .env.example .env
+# edit .env and set TELEGRAM_BOT_TOKEN
+nano .env
+```
+
+`.env` is git-ignored, so your token never gets committed.
+
+### 2. Build & run
+
+```bash
+docker compose up -d --build
+```
+
+That's it. The bot is now running in the background. Check it:
+
+```bash
+docker compose logs -f
+# → [nearfriend] bot @your_bot_username is online
+```
+
+### 3. Operate
+
+| Action | Command |
+|--------|---------|
+| View logs | `docker compose logs -f` |
+| Restart | `docker compose restart` |
+| Stop | `docker compose down` |
+| Update to latest code | `git pull && docker compose up -d --build` |
+
+### Optional: enable chat translation
+
+Uncomment and fill these in `.env`:
+
+```env
+TRANSLATION_API_URL=https://libretranslate.com/translate
+TRANSLATION_API_KEY=your_key_if_required
+```
+
+Then `docker compose up -d --build`.
+
+### What's in the image
+
+- Multi-stage build → final image is **~15 MB** (Alpine + static binary).
+- Runs as a **non-root** user.
+- Ships `ca-certificates` (HTTPS to Telegram/translation API) and `tzdata` (the bot resolves per-user timezones like `Asia/Tehran` for wake-hours & time-based achievements).
+- `restart: unless-stopped` — survives crashes and reboots.
+
+### Deploy without Compose
+
+```bash
+docker build -t nearfriend-bot .
+docker run -d --name nearfriend-bot --restart unless-stopped \
+  -e TELEGRAM_BOT_TOKEN="123:ABC..." nearfriend-bot
+```
+
+> **Note on persistence:** storage is in-memory, so registered users are wiped whenever the container restarts. For a long-running deployment, swap `bot/storage.go` for a real DB (see [Persistence](#persistence)).
+
+---
+
 ## How matching works (mutual consent)
 
 When user A searches for "Female, within 5 km", candidate B is shown **only if**:
@@ -176,6 +249,8 @@ nearfriend-bot/
 │   ├── workers.go       # background timers: coffee chat + notifications
 │   ├── achievements.go  # achievement-grant logic
 │   └── storage_test.go  # unit tests
+├── Dockerfile           # multi-stage build → ~15 MB Alpine image
+├── docker-compose.yml   # one-command deploy (reads .env)
 ├── .github/workflows/ci.yml
 ├── LICENSE              # MIT
 └── README.md

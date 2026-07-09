@@ -1,0 +1,28 @@
+# Git & CI
+.git
+.github
+
+# Docs (not needed to build the binary)
+*.md
+LICENSE
+
+# Local env / secrets — NEVER bake these into the image
+.env
+.env.*
+!.env.example
+
+# Build & test artifacts
+nearfriend-bot
+*.test
+*.out
+
+# Stray non-Go dirs
+path/
+venv/
+.venv/
+
+# Editor / OS junk
+.DS_Store
+*.swp
+.idea/
+.vscode/

@@ -1,0 +1,19 @@
+# Easy one-command deploy:
+#   1. cp .env.example .env   (then put your token in .env)
+#   2. docker compose up -d --build
+#
+# View logs:   docker compose logs -f
+# Update:      git pull && docker compose up -d --build
+# Stop:        docker compose down
+
+services:
+  bot:
+    build: .
+    image: nearfriend-bot:latest
+    container_name: nearfriend-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Keeps log timestamps sane; the bot resolves each user's own tz.
+      TZ: UTC
