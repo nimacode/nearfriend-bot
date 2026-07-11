@@ -29,9 +29,6 @@ func (b *Bot) chatTimerLoop() {
 			if u.ChatEndsAt.IsZero() || !now.After(u.ChatEndsAt) {
 				return
 			}
-			// Process each pair only once: when the first side is
-			// collected, mark its partner as already handled so we
-			// don't send the "time's up" prompt twice.
 			if seen[u.ID] {
 				return
 			}
@@ -49,15 +46,10 @@ func (b *Bot) chatTimerLoop() {
 
 // endCoffeeChat handles the timer-expiry branch: notify both sides and
 // offer them a "continue?" prompt while keeping them in the chat.
-//
-// Each lock acquisition is done as a separate, non-nested call.
-// Calling Get/Upsert/WithUser from inside another WithUser callback
-// would self-deadlock because sync.RWMutex is not re-entrant.
 func (b *Bot) endCoffeeChat(userID int64) {
 	var partnerID int64
 
 	b.storage.WithUser(userID, func(u *User) {
-		// Always clear our own timer.
 		u.ChatEndsAt = time.Time{}
 		u.IsCoffeeChat = false
 		if u.PartnerID == 0 || u.State != StateInChat {
@@ -69,18 +61,20 @@ func (b *Bot) endCoffeeChat(userID int64) {
 		return
 	}
 
-	// Clear the partner's timer in its own critical section.
 	b.storage.WithUser(partnerID, func(p *User) {
 		p.ChatEndsAt = time.Time{}
 		p.IsCoffeeChat = false
 	})
 
+	userLang := b.partnerLang(userID)
+	partnerLang := b.partnerLang(partnerID)
+
 	b.sendText(userID,
-		"⏰ *Coffee time's up!*\nWould you like to keep chatting?",
-		continueKeyboard(partnerID, true), true)
+		t(userLang, "msg_coffee_time_up"),
+		continueKeyboard(partnerID, userLang), true)
 	b.sendText(partnerID,
-		"⏰ *Coffee time's up!*\nWould you like to keep chatting?",
-		continueKeyboard(userID, false), true)
+		t(partnerLang, "msg_coffee_time_up"),
+		continueKeyboard(userID, partnerLang), true)
 }
 
 // notifyLoop runs every 5 minutes and pings users who opted in to
@@ -99,11 +93,10 @@ func (b *Bot) checkAndNotify() {
 		id   int64
 		name string
 		dist float64
+		lang string
 	}
 	var pending []pendingNotification
 
-	// Range holds only the read lock, so we must not mutate users here.
-	// Collect the notifications first, then update state afterwards.
 	b.storage.Range(func(u *User) {
 		if !u.NotifyWhenNearby {
 			return
@@ -117,10 +110,10 @@ func (b *Bot) checkAndNotify() {
 		if now.Sub(u.LastNotifiedAt) < 30*time.Minute {
 			return
 		}
-		// Skip users who are mid-flow.
 		switch u.State {
 		case StateInChat, StateBrowsing, StateNeedRadius,
-			StateNeedSearchGender, StateNeedLocation, StateNeedGender:
+			StateNeedSearchGender, StateNeedLocation, StateNeedGender,
+			StateNeedUILang:
 			return
 		}
 
@@ -133,7 +126,6 @@ func (b *Bot) checkAndNotify() {
 			return
 		}
 
-		// Pick the closest one.
 		best := candidates[0]
 		bestDist := DistanceKm(u.Latitude, u.Longitude, best.Latitude, best.Longitude)
 		for _, c := range candidates[1:] {
@@ -145,19 +137,16 @@ func (b *Bot) checkAndNotify() {
 
 		pending = append(pending, pendingNotification{
 			id:   u.ID,
-			name: shortName(best),
+			name: shortName(best, u.Lang()),
 			dist: bestDist,
+			lang: u.Lang(),
 		})
 	})
 
 	for _, p := range pending {
 		b.sendText(p.id,
-			"🔔 *Someone new is nearby!*\n"+
-				"👤 "+p.name+" · "+
-				formatDistance(p.dist)+" away\n\n"+
-				"Tap *Find nearby friends* to connect!",
+			tf(p.lang, "fmt_notify_someone_nearby", p.name, formatDistance(p.dist)),
 			nil, true)
-		// Stamp the cooldown under the write lock.
 		b.storage.WithUser(p.id, func(x *User) {
 			x.LastNotifiedAt = now
 		})

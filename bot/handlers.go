@@ -23,7 +23,15 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 
 	u, ok := b.storage.Get(msg.From.ID)
 	if !ok {
-		b.sendText(msg.Chat.ID, "Send /start to begin.", nil, false)
+		b.sendText(msg.Chat.ID, t(UILangEn, "msg_send_start"), nil, false)
+		return
+	}
+
+	lang := u.Lang()
+
+	// User hasn't picked a language yet.
+	if u.State == StateNeedUILang {
+		b.sendText(msg.Chat.ID, t(lang, "lang_select"), uiLangKeyboard(), false)
 		return
 	}
 
@@ -31,13 +39,13 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	// otherwise be relayed as plain text to the partner).
 	if u.State == StateInChat {
 		switch strings.TrimSpace(msg.Text) {
-		case "❌ End chat":
+		case t(lang, "btn_end_chat"):
 			b.endChat(u.ID, msg.Chat.ID, true)
 			return
-		case "🚫 Block":
+		case t(lang, "btn_block"):
 			b.onMenuBlock(msg)
 			return
-		case "🚩 Report":
+		case t(lang, "btn_report"):
 			b.onMenuReport(msg)
 			return
 		}
@@ -66,9 +74,11 @@ func (b *Bot) handleCommand(msg *tgbotapi.Message) {
 			b.cmdStart(msg)
 			return
 		}
-		b.sendText(msg.Chat.ID, "Send /start to begin.", nil, false)
+		b.sendText(msg.Chat.ID, t(UILangEn, "msg_send_start"), nil, false)
 		return
 	}
+
+	lang := u.Lang()
 
 	// While in chat only a few commands are meaningful.
 	if u.State == StateInChat {
@@ -77,9 +87,19 @@ func (b *Bot) handleCommand(msg *tgbotapi.Message) {
 			b.endChat(msg.From.ID, msg.Chat.ID, true)
 		default:
 			b.sendText(msg.Chat.ID,
-				"You're in a chat — send messages to your partner, or /end to disconnect.",
-				chatKeyboard, false)
+				t(lang, "msg_in_chat_hint"),
+				chatKeyboard(lang), false)
 		}
+		return
+	}
+
+	// If picking language, only /start is meaningful.
+	if u.State == StateNeedUILang {
+		if cmd == "start" {
+			b.cmdStart(msg)
+			return
+		}
+		b.sendText(msg.Chat.ID, t(lang, "lang_select"), uiLangKeyboard(), false)
 		return
 	}
 
@@ -87,15 +107,15 @@ func (b *Bot) handleCommand(msg *tgbotapi.Message) {
 	case "start":
 		b.cmdStart(msg)
 	case "menu":
-		b.sendText(msg.Chat.ID, "Main menu 👇", mainMenu, false)
+		b.sendText(msg.Chat.ID, t(lang, "msg_main_menu"), mainMenu(lang), false)
 	case "end", "stop", "cancel":
-		b.sendText(msg.Chat.ID, "You're not in a chat right now.", mainMenu, false)
+		b.sendText(msg.Chat.ID, t(lang, "msg_not_in_chat"), mainMenu(lang), false)
 	case "profile":
 		b.showProfile(msg.Chat.ID, u)
 	case "achievements":
 		b.sendText(msg.Chat.ID, achievementsText(u), nil, true)
 	case "language":
-		b.sendText(msg.Chat.ID, "Pick your language:", languageKeyboard(), false)
+		b.sendText(msg.Chat.ID, t(lang, "lang_select_short"), uiLangKeyboard(), false)
 	case "hours":
 		b.startWakeHoursFlow(msg.Chat.ID, u)
 	case "notify":
@@ -103,15 +123,14 @@ func (b *Bot) handleCommand(msg *tgbotapi.Message) {
 	case "skip":
 		b.handleSkip(msg.Chat.ID, u)
 	default:
-		b.sendText(msg.Chat.ID, "Unknown command. Try /start or /menu.", nil, false)
+		b.sendText(msg.Chat.ID, t(lang, "msg_unknown_cmd"), nil, false)
 	}
 }
 
 func (b *Bot) handleCallback(cq *tgbotapi.CallbackQuery) {
 	// For inaccessible (very old) messages Telegram sends no Message.
-	// Guard against a nil-dereference panic in the handlers below.
 	if cq.Message == nil {
-		b.answerCallback(cq.ID, "This button is no longer available.")
+		b.answerCallback(cq.ID, t(UILangEn, "msg_button_unavailable"))
 		return
 	}
 	data := cq.Data
@@ -127,7 +146,7 @@ func (b *Bot) handleCallback(cq *tgbotapi.CallbackQuery) {
 	case len(parts) == 2 && parts[0] == "nearby":
 		id, err := strconv.ParseInt(parts[1], 10, 64)
 		if err != nil {
-			b.answerCallback(cq.ID, "Bad user id")
+			b.answerCallback(cq.ID, t(UILangEn, "err_bad_user_id"))
 			return
 		}
 		b.onNearbyPick(cq, id)
@@ -166,7 +185,7 @@ func (b *Bot) handleCallback(cq *tgbotapi.CallbackQuery) {
 		b.handleConfirm(cq, parts)
 
 	default:
-		b.answerCallback(cq.ID, "Unknown action")
+		b.answerCallback(cq.ID, t(UILangEn, "err_unknown_action"))
 	}
 }
 
@@ -178,34 +197,37 @@ func (b *Bot) cmdStart(msg *tgbotapi.Message) {
 	uid := msg.From.ID
 
 	existing, ok := b.storage.Get(uid)
-	if ok && existing.Gender != "" && existing.Latitude != 0 {
-		b.sendText(msg.Chat.ID, "Welcome back! 👋", mainMenu, false)
+	if ok && existing.Gender != "" && existing.Latitude != 0 && existing.UILang != "" {
+		lang := existing.Lang()
+		b.sendText(msg.Chat.ID, t(lang, "msg_welcome_back"), mainMenu(lang), false)
 		return
 	}
 
-	u := &User{
-		ID:        uid,
-		FirstName: msg.From.FirstName,
-		Username:  msg.From.UserName,
-		State:     StateNeedLocation,
+	// No language chosen yet → ask first.
+	if !ok || existing.UILang == "" {
+		u := &User{
+			ID:        uid,
+			FirstName: msg.From.FirstName,
+			Username:  msg.From.UserName,
+			State:     StateNeedUILang,
+		}
+		if ok {
+			u.Gender = existing.Gender
+			u.LookingFor = existing.LookingFor
+		}
+		b.storage.Upsert(u)
+		b.sendText(msg.Chat.ID, t(UILangEn, "lang_select"), uiLangKeyboard(), false)
+		return
 	}
-	if ok {
-		u.State = StateNeedLocation
-		u.Gender = existing.Gender
-		u.LookingFor = existing.LookingFor
-	}
-	b.storage.Upsert(u)
 
-	hello := fmt.Sprintf(
-		"Hey %s! 👋\n\n"+
-			"I'm *NearFriend* — I help you meet people nearby for a chat.\n\n"+
-			"1️⃣ Share your location with the button below.\n"+
-			"2️⃣ Tell me your gender.\n"+
-			"3️⃣ Tap *Find nearby friends* whenever you want to match.\n\n"+
-			"_Tip: type /skip at any prompt to skip._",
-		msg.From.FirstName,
-	)
-	b.sendText(msg.Chat.ID, hello, requestLocationKeyboard, true)
+	// Has language but not fully registered → resume registration.
+	lang := existing.Lang()
+	b.storage.WithUser(uid, func(x *User) {
+		x.State = StateNeedLocation
+	})
+	b.sendText(msg.Chat.ID,
+		tf(lang, "msg_start_intro", msg.From.FirstName),
+		requestLocationKeyboard(lang), true)
 }
 
 func (b *Bot) onLocation(msg *tgbotapi.Message) {
@@ -213,6 +235,7 @@ func (b *Bot) onLocation(msg *tgbotapi.Message) {
 	if !ok {
 		u = &User{ID: msg.From.ID, FirstName: msg.From.FirstName, Username: msg.From.UserName}
 	}
+	lang := u.Lang()
 	u.Latitude = msg.Location.Latitude
 	u.Longitude = msg.Location.Longitude
 	u.LocationAt = time.Now()
@@ -222,25 +245,25 @@ func (b *Bot) onLocation(msg *tgbotapi.Message) {
 		b.storage.Upsert(u)
 
 		b.sendText(msg.Chat.ID,
-			"📍 Got your location! Now tell me your gender:",
-			genderKeyboard("gender:self"), false)
-		b.sendText(msg.Chat.ID, "Main menu 👇", mainMenu, false)
+			t(lang, "msg_got_location"),
+			genderKeyboard(lang, "gender:self"), false)
+		b.sendText(msg.Chat.ID, t(lang, "msg_main_menu"), mainMenu(lang), false)
 		return
 	}
 
 	b.storage.Upsert(u)
 	if msg.Location.LivePeriod > 0 {
 		b.sendText(msg.Chat.ID,
-			"📍 Live location updated! (This only affects your profile — share live location with a chat partner from inside a chat.)",
-			mainMenu, false)
+			t(lang, "msg_live_location_updated"),
+			mainMenu(lang), false)
 		return
 	}
-	b.sendText(msg.Chat.ID, "📍 Location updated!", mainMenu, false)
+	b.sendText(msg.Chat.ID, t(lang, "msg_location_updated"), mainMenu(lang), false)
 }
 
-func (b *Bot) promptLocation(chatID int64) {
-	b.sendText(chatID, "Tap the button to share your current location:",
-		requestLocationKeyboard, false)
+func (b *Bot) promptLocation(chatID int64, lang string) {
+	b.sendText(chatID, t(lang, "msg_share_location_prompt"),
+		requestLocationKeyboard(lang), false)
 }
 
 // ---------------------------------------------------------------------------
@@ -248,56 +271,60 @@ func (b *Bot) promptLocation(chatID int64) {
 // ---------------------------------------------------------------------------
 
 func (b *Bot) handleStatefulInput(msg *tgbotapi.Message, u *User) {
+	lang := u.Lang()
+
 	// Menu buttons work from any state — let users jump around.
 	switch strings.TrimSpace(msg.Text) {
-	case "👤 My profile":
+	case t(lang, "btn_profile"):
 		b.showProfile(msg.Chat.ID, u)
 		return
-	case "🚻 Set my gender":
-		b.sendText(msg.Chat.ID, "What's your gender?", genderKeyboard("gender:self"), false)
+	case t(lang, "btn_set_gender"):
+		b.sendText(msg.Chat.ID, t(lang, "msg_whats_gender"), genderKeyboard(lang, "gender:self"), false)
 		return
-	case "📍 Update my location":
-		b.promptLocation(msg.Chat.ID)
+	case t(lang, "btn_update_location"):
+		b.promptLocation(msg.Chat.ID, lang)
 		return
-	case "🔍 Find nearby friends":
+	case t(lang, "btn_find_nearby"):
 		b.startSearch(u, msg.Chat.ID, false)
 		return
-	case "☕ Coffee chat (15 min)":
+	case t(lang, "btn_coffee_chat"):
 		b.startSearch(u, msg.Chat.ID, true)
 		return
-	case "🌐 Language":
-		b.sendText(msg.Chat.ID, "Pick your language:", languageKeyboard(), false)
+	case t(lang, "btn_language"):
+		b.sendText(msg.Chat.ID, t(lang, "lang_select_short"), uiLangKeyboard(), false)
 		return
-	case "⏰ Wake hours":
+	case t(lang, "btn_wake_hours"):
 		b.startWakeHoursFlow(msg.Chat.ID, u)
 		return
-	case "🔔 Notify me":
+	case t(lang, "btn_notify"):
 		b.toggleNotifications(u, msg.Chat.ID)
 		return
-	case "🏆 Achievements":
+	case t(lang, "btn_achievements"):
 		b.sendText(msg.Chat.ID, achievementsText(u), nil, true)
 		return
-	case "❌ End chat":
+	case t(lang, "btn_end_chat"):
 		b.endChat(u.ID, msg.Chat.ID, true)
 		return
 	}
 
 	switch u.State {
+	case StateNeedUILang:
+		b.sendText(msg.Chat.ID, t(lang, "lang_select"), uiLangKeyboard(), false)
+
 	case StateNeedGender:
-		b.sendText(msg.Chat.ID,
-			"Please pick your gender with the buttons below 👇", nil, false)
-		b.sendText(msg.Chat.ID, "What's your gender?", genderKeyboard("gender:self"), false)
+		b.sendText(msg.Chat.ID, t(lang, "msg_pick_gender_below"), nil, false)
+		b.sendText(msg.Chat.ID, t(lang, "msg_whats_gender"), genderKeyboard(lang, "gender:self"), false)
 
 	case StateNeedSearchGender:
-		b.sendText(msg.Chat.ID, "Pick who you want to chat with 👇", nil, false)
+		b.sendText(msg.Chat.ID, t(lang, "msg_pick_search_gender"), nil, false)
 
 	case StateNeedRadius:
-		b.sendText(msg.Chat.ID, "Pick a search radius 👇", nil, false)
+		b.sendText(msg.Chat.ID, t(lang, "msg_pick_radius"), nil, false)
 
 	case StateNeedAlias:
 		alias := strings.TrimSpace(msg.Text)
 		if alias == "" {
-			b.sendText(msg.Chat.ID, "Alias can't be empty. Try again or /skip.", nil, false)
+			b.sendText(msg.Chat.ID, t(lang, "msg_alias_empty"), nil, false)
 			return
 		}
 		if len(alias) > 32 {
@@ -307,7 +334,7 @@ func (b *Bot) handleStatefulInput(msg *tgbotapi.Message, u *User) {
 			x.Alias = alias
 			x.State = StateIdle
 		})
-		b.sendText(msg.Chat.ID, fmt.Sprintf("✅ Alias set to *%s*", alias), mainMenu, true)
+		b.sendText(msg.Chat.ID, tf(lang, "fmt_alias_set", alias), mainMenu(lang), true)
 
 	case StateNeedBio:
 		bio := strings.TrimSpace(msg.Text)
@@ -318,38 +345,38 @@ func (b *Bot) handleStatefulInput(msg *tgbotapi.Message, u *User) {
 			x.Bio = bio
 			x.State = StateIdle
 		})
-		b.sendText(msg.Chat.ID, "✅ Bio saved.", mainMenu, false)
+		b.sendText(msg.Chat.ID, t(lang, "msg_bio_saved"), mainMenu(lang), false)
 
 	case StateNeedInterests:
 		b.sendText(msg.Chat.ID,
-			"Tap the tags below to toggle them, then press *Done*.",
+			t(lang, "msg_interests_prompt_2"),
 			interestsKeyboard(interestSet(u.Interests), 0), true)
 
 	case StateNeedPhoto:
 		b.handlePhotoInput(msg, u)
 
 	case StateNeedLanguage:
-		b.sendText(msg.Chat.ID, "Pick your language:", languageKeyboard(), false)
+		b.sendText(msg.Chat.ID, t(lang, "lang_select_short"), uiLangKeyboard(), false)
 
 	case StateNeedTimezone:
-		b.sendText(msg.Chat.ID, "Pick your timezone:", timezoneKeyboard(), false)
+		b.sendText(msg.Chat.ID, t(lang, "msg_pick_timezone"), timezoneKeyboard(), false)
 
 	case StateNeedWakeFrom:
 		h, err := strconv.Atoi(strings.TrimSpace(msg.Text))
 		if err != nil || h < 0 || h > 23 {
-			b.sendText(msg.Chat.ID, "Send a number 0-23, or /skip.", nil, false)
+			b.sendText(msg.Chat.ID, t(lang, "msg_send_hour_0_23"), nil, false)
 			return
 		}
 		b.storage.WithUser(u.ID, func(x *User) {
 			x.WakeFrom = h
 			x.State = StateNeedWakeTo
 		})
-		b.sendText(msg.Chat.ID, fmt.Sprintf("Wake from *%d:00*. Now send the hour you usually go to sleep (0-23):", h), nil, true)
+		b.sendText(msg.Chat.ID, tf(lang, "fmt_wake_from_set_named", h), nil, true)
 
 	case StateNeedWakeTo:
 		h, err := strconv.Atoi(strings.TrimSpace(msg.Text))
 		if err != nil || h < 0 || h > 23 {
-			b.sendText(msg.Chat.ID, "Send a number 0-23, or /skip.", nil, false)
+			b.sendText(msg.Chat.ID, t(lang, "msg_send_hour_0_23"), nil, false)
 			return
 		}
 		b.storage.WithUser(u.ID, func(x *User) {
@@ -357,37 +384,38 @@ func (b *Bot) handleStatefulInput(msg *tgbotapi.Message, u *User) {
 			x.State = StateIdle
 		})
 		b.sendText(msg.Chat.ID,
-			fmt.Sprintf("✅ Wake hours: *%02d:00 - %02d:00*", u.WakeFrom, h),
-			mainMenu, true)
+			tf(lang, "fmt_wake_hours_set", u.WakeFrom, h),
+			mainMenu(lang), true)
 
 	case StateNeedNotifyRadius:
-		b.sendText(msg.Chat.ID, "Pick a notification radius 👇", notifyRadiusKeyboard(), false)
+		b.sendText(msg.Chat.ID, t(lang, "msg_pick_notify_radius"), notifyRadiusKeyboard(), false)
 
 	case StateRatePartner:
-		b.sendText(msg.Chat.ID, "Tap a star to rate your chat 👇",
+		b.sendText(msg.Chat.ID, t(lang, "msg_rate_chat"),
 			ratingKeyboard(u.PendingRatingFor), false)
 
 	default:
-		b.sendText(msg.Chat.ID, "Use the menu below 👇", mainMenu, false)
+		b.sendText(msg.Chat.ID, t(lang, "msg_use_menu"), mainMenu(lang), false)
 	}
 }
 
 func (b *Bot) handleSkip(chatID int64, u *User) {
+	lang := u.Lang()
 	switch u.State {
 	case StateNeedAlias, StateNeedBio, StateNeedInterests,
 		StateNeedLanguage, StateNeedTimezone, StateNeedWakeFrom, StateNeedWakeTo:
 		b.storage.WithUser(u.ID, func(x *User) {
 			x.State = StateIdle
 		})
-		b.sendText(chatID, "Skipped.", mainMenu, false)
+		b.sendText(chatID, t(lang, "msg_skipped"), mainMenu(lang), false)
 	case StateRatePartner:
 		b.storage.WithUser(u.ID, func(x *User) {
 			x.PendingRatingFor = 0
 			x.State = StateIdle
 		})
-		b.sendText(chatID, "Skipped rating.", mainMenu, false)
+		b.sendText(chatID, t(lang, "msg_skipped_rating"), mainMenu(lang), false)
 	default:
-		b.sendText(chatID, "Nothing to skip.", mainMenu, false)
+		b.sendText(chatID, t(lang, "msg_nothing_to_skip"), mainMenu(lang), false)
 	}
 }
 
@@ -397,46 +425,47 @@ func (b *Bot) handleSkip(chatID int64, u *User) {
 
 func (b *Bot) onGenderPick(cq *tgbotapi.CallbackQuery, scope, value string) {
 	if value != GenderMale && value != GenderFemale && value != GenderAny {
-		b.answerCallback(cq.ID, "Bad value")
+		b.answerCallback(cq.ID, t(UILangEn, "err_bad_value"))
 		return
 	}
 
 	u, ok := b.storage.Get(cq.From.ID)
 	if !ok {
-		b.answerCallback(cq.ID, "Please /start first")
+		b.answerCallback(cq.ID, t(UILangEn, "err_please_start"))
 		return
 	}
+	lang := u.Lang()
 
 	switch scope {
 	case "self":
 		b.storage.WithUser(u.ID, func(x *User) {
 			x.Gender = value
 		})
-		b.answerCallback(cq.ID, "Saved!")
+		b.answerCallback(cq.ID, t(lang, "msg_saved"))
 
 		edit := tgbotapi.NewEditMessageText(cq.Message.Chat.ID, cq.Message.MessageID,
-			fmt.Sprintf("✅ Your gender is set to *%s*.", prettyGender(value)))
+			tf(lang, "fmt_gender_set", prettyGender(value, lang)))
 		edit.ParseMode = "Markdown"
 		b.send(edit)
 		b.sendText(cq.Message.Chat.ID,
-			"You're all set! Tap *Find nearby friends* when you're ready.",
-			mainMenu, true)
+			t(lang, "msg_gender_all_set"),
+			mainMenu(lang), true)
 
 	case "search":
 		b.storage.WithUser(u.ID, func(x *User) {
 			x.LookingFor = value
 			x.State = StateNeedRadius
 		})
-		b.answerCallback(cq.ID, "Got it")
+		b.answerCallback(cq.ID, t(lang, "label_got_it"))
 
 		edit := tgbotapi.NewEditMessageText(cq.Message.Chat.ID, cq.Message.MessageID,
-			fmt.Sprintf("Looking for: *%s*. Now pick a radius 👇", prettyGender(value)))
+			tf(lang, "fmt_looking_for_radius", prettyGender(value, lang)))
 		edit.ParseMode = "Markdown"
 		b.send(edit)
-		b.sendText(cq.Message.Chat.ID, "Search within…", radiusKeyboard(), false)
+		b.sendText(cq.Message.Chat.ID, t(lang, "msg_search_within"), radiusKeyboard(lang), false)
 
 	default:
-		b.answerCallback(cq.ID, "Unknown gender scope")
+		b.answerCallback(cq.ID, t(lang, "err_unknown_gender_scope"))
 	}
 }
 
@@ -445,14 +474,15 @@ func (b *Bot) onGenderPick(cq *tgbotapi.CallbackQuery, scope, value string) {
 // ---------------------------------------------------------------------------
 
 func (b *Bot) startSearch(u *User, chatID int64, coffee bool) {
+	lang := u.Lang()
 	if u.Latitude == 0 && u.Longitude == 0 {
-		b.sendText(chatID, "Please share your location first.",
-			requestLocationKeyboard, false)
+		b.sendText(chatID, t(lang, "msg_share_location_first"),
+			requestLocationKeyboard(lang), false)
 		return
 	}
 	if u.Gender == "" {
-		b.sendText(chatID, "Set your gender first:",
-			genderKeyboard("gender:self"), false)
+		b.sendText(chatID, t(lang, "msg_set_gender_first"),
+			genderKeyboard(lang, "gender:self"), false)
 		return
 	}
 
@@ -461,27 +491,28 @@ func (b *Bot) startSearch(u *User, chatID int64, coffee bool) {
 		x.IsCoffeeSearch = coffee
 	})
 
-	prompt := "Who do you want to chat with?"
+	prompt := t(lang, "msg_who_chat_with")
 	if coffee {
-		prompt = "☕ Coffee chat (15 min) — who do you want to chat with?"
+		prompt = t(lang, "msg_coffee_who_chat_with")
 	}
-	b.sendText(chatID, prompt, genderKeyboard("gender:search"), false)
+	b.sendText(chatID, prompt, genderKeyboard(lang, "gender:search"), false)
 }
 
 func (b *Bot) onRadiusPick(cq *tgbotapi.CallbackQuery, raw string) {
 	u, ok := b.storage.Get(cq.From.ID)
 	if !ok {
-		b.answerCallback(cq.ID, "Please /start first")
+		b.answerCallback(cq.ID, t(UILangEn, "err_please_start"))
 		return
 	}
+	lang := u.Lang()
 	if u.State != StateNeedRadius {
-		b.answerCallback(cq.ID, "Not waiting for radius")
+		b.answerCallback(cq.ID, t(lang, "err_not_waiting_radius"))
 		return
 	}
 
 	radius, err := strconv.ParseFloat(raw, 64)
 	if err != nil {
-		b.answerCallback(cq.ID, "Bad radius")
+		b.answerCallback(cq.ID, t(lang, "err_bad_radius"))
 		return
 	}
 
@@ -494,36 +525,34 @@ func (b *Bot) onRadiusPick(cq *tgbotapi.CallbackQuery, raw string) {
 	b.answerCallback(cq.ID, fmt.Sprintf("%.0f km", radius))
 
 	edit := tgbotapi.NewEditMessageText(cq.Message.Chat.ID, cq.Message.MessageID,
-		fmt.Sprintf("Searching within %.0f km…", radius))
+		tf(lang, "fmt_searching_within", radius))
 	b.send(edit)
 
 	if len(candidates) == 0 {
-		hint := "😕 No nearby matches. Try a bigger radius, or update your preferences."
+		hint := t(lang, "msg_no_matches")
 		if coffee {
-			hint = "😕 No nearby matches for a coffee chat. Try a bigger radius."
+			hint = t(lang, "msg_no_coffee_matches")
 		}
-		b.sendText(cq.Message.Chat.ID, hint, mainMenu, false)
+		b.sendText(cq.Message.Chat.ID, hint, mainMenu(lang), false)
 		return
 	}
 
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, c := range candidates {
 		dist := DistanceKm(u.Latitude, u.Longitude, c.Latitude, c.Longitude)
-		label := formatMatchLabel(c, dist)
+		label := formatMatchLabel(c, dist, lang)
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(label,
 				"nearby:"+strconv.FormatInt(c.ID, 10)),
 		))
 	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData("↩️ Cancel", "endchat"),
+		tgbotapi.NewInlineKeyboardButtonData(t(lang, "btn_cancel"), "endchat"),
 	))
 
-	title := fmt.Sprintf("Found *%d* nearby %s. Pick one 👇",
-		len(candidates), prettyGender(u.LookingFor))
+	title := tf(lang, "fmt_found_nearby", len(candidates), prettyGender(u.LookingFor, lang))
 	if coffee {
-		title = fmt.Sprintf("☕ Found *%d* nearby %s for a coffee chat. Pick one 👇",
-			len(candidates), prettyGender(u.LookingFor))
+		title = tf(lang, "fmt_found_coffee_nearby", len(candidates), prettyGender(u.LookingFor, lang))
 	}
 	b.sendText(cq.Message.Chat.ID, title, tgbotapi.NewInlineKeyboardMarkup(rows...), true)
 }
@@ -531,27 +560,29 @@ func (b *Bot) onRadiusPick(cq *tgbotapi.CallbackQuery, raw string) {
 func (b *Bot) onNearbyPick(cq *tgbotapi.CallbackQuery, targetID int64) {
 	u, ok := b.storage.Get(cq.From.ID)
 	if !ok {
-		b.answerCallback(cq.ID, "Please /start first")
+		b.answerCallback(cq.ID, t(UILangEn, "err_please_start"))
 		return
 	}
+	lang := u.Lang()
 	if u.State != StateBrowsing {
-		b.answerCallback(cq.ID, "Pick a fresh search first")
+		b.answerCallback(cq.ID, t(lang, "err_pick_fresh_search"))
 		return
 	}
 	target, ok := b.storage.Get(targetID)
 	if !ok {
-		b.answerCallback(cq.ID, "User unavailable")
+		b.answerCallback(cq.ID, t(lang, "err_user_unavailable"))
 		return
 	}
 	if target.State == StateInChat {
-		b.answerCallback(cq.ID, "Already chatting")
+		b.answerCallback(cq.ID, t(lang, "err_already_chatting"))
 		return
 	}
 	if !target.IsAwake() {
-		b.answerCallback(cq.ID, "They're sleeping right now 😴")
+		b.answerCallback(cq.ID, t(lang, "err_sleeping"))
 		return
 	}
 
+	targetLang := target.Lang()
 	coffee := u.IsCoffeeSearch
 	b.storage.WithUser(u.ID, func(x *User) {
 		x.PartnerID = targetID
@@ -568,30 +599,28 @@ func (b *Bot) onNearbyPick(cq *tgbotapi.CallbackQuery, targetID int64) {
 		b.storage.WithUser(targetID, func(x *User) { x.ChatEndsAt = ends; x.IsCoffeeChat = true })
 	}
 
-	b.answerCallback(cq.ID, "Connected!")
+	b.answerCallback(cq.ID, t(lang, "msg_connected"))
 
 	edit := tgbotapi.NewEditMessageText(cq.Message.Chat.ID, cq.Message.MessageID,
-		fmt.Sprintf("✅ You're now chatting with %s. Say hi!", shortName(target)))
+		tf(lang, "fmt_now_chatting_with", shortName(target, lang)))
 	b.send(edit)
 
 	b.sendText(targetID,
-		fmt.Sprintf("💬 %s wants to chat with you. Say hi!", shortName(u)),
-		chatKeyboard, false)
+		tf(targetLang, "fmt_partner_wants_chat", shortName(u, targetLang)),
+		chatKeyboard(targetLang), false)
 
 	// Suggest sharing live location.
 	b.sendText(u.ID,
-		"📍 _Tip: share your live location with your match!_\n"+
-			"_Tap the 📎 next to the text field → Location → Share My Live Location._",
-		chatKeyboard, false)
+		t(lang, "msg_live_loc_tip"),
+		chatKeyboard(lang), true)
 	b.sendText(targetID,
-		"📍 _Tip: share your live location with your match!_\n"+
-			"_Tap the 📎 next to the text field → Location → Share My Live Location._",
-		chatKeyboard, false)
+		t(targetLang, "msg_live_loc_tip"),
+		chatKeyboard(targetLang), true)
 
 	// Icebreaker
-	q := Icebreakers[time.Now().UnixNano()%int64(len(Icebreakers))]
-	b.sendText(u.ID, "💡 *Icebreaker:* "+q, nil, true)
-	b.sendText(targetID, "💡 *Icebreaker:* "+q, nil, true)
+	idx := int(time.Now().UnixNano() % int64(len(Icebreakers)))
+	b.sendText(u.ID, t(lang, "msg_icebreaker_prefix")+icebreaker(lang, idx), nil, true)
+	b.sendText(targetID, t(targetLang, "msg_icebreaker_prefix")+icebreaker(targetLang, idx), nil, true)
 }
 
 // filterMatches returns nearby users that:
@@ -638,9 +667,10 @@ func (b *Bot) relayToPartner(msg *tgbotapi.Message) {
 	if !ok || u.PartnerID == 0 {
 		return
 	}
+	lang := u.Lang()
 	partner, ok := b.storage.Get(u.PartnerID)
 	if !ok {
-		b.sendText(msg.Chat.ID, "Your partner left. Chat ended.", mainMenu, false)
+		b.sendText(msg.Chat.ID, t(lang, "msg_partner_left"), mainMenu(lang), false)
 		b.storage.WithUser(u.ID, func(x *User) {
 			x.State = StateIdle
 			x.PartnerID = 0
@@ -665,7 +695,7 @@ func (b *Bot) relayToPartner(msg *tgbotapi.Message) {
 	copyMsg := tgbotapi.NewCopyMessage(partner.ID, msg.Chat.ID, msg.MessageID)
 	if _, err := b.api.Send(copyMsg); err != nil {
 		log.Printf("[relay] copy failed: %v", err)
-		b.sendText(msg.Chat.ID, "⚠️ Could not deliver your message.", nil, false)
+		b.sendText(msg.Chat.ID, t(lang, "msg_msg_not_delivered"), nil, false)
 	}
 }
 
@@ -675,9 +705,10 @@ func (b *Bot) onEndChatButton(cq *tgbotapi.CallbackQuery) {
 		b.answerCallback(cq.ID, "")
 		return
 	}
+	lang := u.Lang()
 	if u.State == StateInChat {
 		b.endChat(cq.From.ID, cq.Message.Chat.ID, false)
-		b.answerCallback(cq.ID, "Cancelled")
+		b.answerCallback(cq.ID, t(lang, "label_cancelled"))
 		return
 	}
 	// Search-list cancel button: just reset state.
@@ -685,8 +716,8 @@ func (b *Bot) onEndChatButton(cq *tgbotapi.CallbackQuery) {
 		x.State = StateIdle
 		x.IsCoffeeSearch = false
 	})
-	b.answerCallback(cq.ID, "Cancelled")
-	b.sendText(cq.Message.Chat.ID, "Cancelled.", mainMenu, false)
+	b.answerCallback(cq.ID, t(lang, "label_cancelled"))
+	b.sendText(cq.Message.Chat.ID, t(lang, "msg_cancelled_dot"), mainMenu(lang), false)
 }
 
 // onEndHereButton ends the chat (with partner notification) from the
@@ -694,15 +725,15 @@ func (b *Bot) onEndChatButton(cq *tgbotapi.CallbackQuery) {
 func (b *Bot) onEndHereButton(cq *tgbotapi.CallbackQuery, partnerIDStr string) {
 	partnerID, err := strconv.ParseInt(partnerIDStr, 10, 64)
 	if err != nil {
-		b.answerCallback(cq.ID, "Bad id")
+		b.answerCallback(cq.ID, t(UILangEn, "err_bad_id"))
 		return
 	}
 	u, ok := b.storage.Get(cq.From.ID)
 	if !ok || u.PartnerID != partnerID || u.State != StateInChat {
-		b.answerCallback(cq.ID, "Chat already ended")
+		b.answerCallback(cq.ID, t(u.Lang(), "msg_chat_already_ended"))
 		return
 	}
-	b.answerCallback(cq.ID, "Chat ended")
+	b.answerCallback(cq.ID, t(u.Lang(), "label_cancelled"))
 	b.endChat(cq.From.ID, cq.Message.Chat.ID, true)
 }
 
@@ -717,8 +748,9 @@ func (b *Bot) endChat(userID, chatID int64, notifyPartner bool) {
 	if !ok {
 		return
 	}
+	lang := u.Lang()
 	if u.State != StateInChat || u.PartnerID == 0 {
-		b.sendText(chatID, "You're not in a chat right now.", mainMenu, false)
+		b.sendText(chatID, t(lang, "msg_not_in_chat"), mainMenu(lang), false)
 		return
 	}
 
@@ -726,8 +758,6 @@ func (b *Bot) endChat(userID, chatID int64, notifyPartner bool) {
 	wasCoffeeChat = u.IsCoffeeChat
 	if p, ok := b.storage.Get(partnerID); ok {
 		partnerCopy = p
-		// Capture the coffee flag before we clear it below — needed for
-		// the "Coffee Lover" achievement check.
 		partnerWasCoffee = p.IsCoffeeChat
 		b.storage.WithUser(partnerID, func(x *User) {
 			x.PartnerID = 0
@@ -745,7 +775,7 @@ func (b *Bot) endChat(userID, chatID int64, notifyPartner bool) {
 	})
 
 	if notifyPartner && partnerID != 0 {
-		b.sendText(partnerID, "💔 Your chat partner has left the conversation.", mainMenu, false)
+		b.sendText(partnerID, t(partnerCopy.Lang(), "msg_partner_left_chat"), mainMenu(partnerCopy.Lang()), false)
 	}
 
 	// Update chat counts and check achievements.
@@ -776,29 +806,28 @@ func (b *Bot) endChat(userID, chatID int64, notifyPartner bool) {
 		})
 
 		b.sendText(chatID,
-			fmt.Sprintf("Chat with %s ended. How was it? Tap a star:",
-				shortName(partnerCopy)),
+			tf(lang, "fmt_chat_with_ended", shortName(partnerCopy, lang)),
 			withSkip(ratingKeyboard(partnerID)), false)
 		b.sendText(partnerID,
-			fmt.Sprintf("Chat with %s ended. How was it? Tap a star:",
-				shortName(u)),
+			tf(partnerCopy.Lang(), "fmt_chat_with_ended", shortName(u, partnerCopy.Lang())),
 			withSkip(ratingKeyboard(userID)), false)
 	} else {
 		b.sendText(chatID,
-			"Chat ended. Tap *Find nearby friends* to start a new one.",
-			mainMenu, true)
+			t(lang, "msg_chat_ended_find_new"),
+			mainMenu(lang), true)
 	}
 
 	// Notify about new achievements.
+	pLang := partnerCopy.Lang()
 	for _, a := range newlyU {
 		b.sendText(userID,
-			"🎉 Achievement unlocked!\n"+a.Emoji+" *"+a.Title+"* — "+a.Description,
-			mainMenu, true)
+			tf(lang, "msg_achievement_unlocked", a.Emoji, achTitle(lang, a.ID), achDesc(lang, a.ID)),
+			mainMenu(lang), true)
 	}
 	for _, a := range newlyP {
 		b.sendText(partnerID,
-			"🎉 Achievement unlocked!\n"+a.Emoji+" *"+a.Title+"* — "+a.Description,
-			mainMenu, true)
+			tf(pLang, "msg_achievement_unlocked", a.Emoji, achTitle(pLang, a.ID), achDesc(pLang, a.ID)),
+			mainMenu(pLang), true)
 	}
 }
 
@@ -806,16 +835,17 @@ func (b *Bot) endChat(userID, chatID int64, notifyPartner bool) {
 func (b *Bot) onContinueAction(cq *tgbotapi.CallbackQuery, partnerIDStr string) {
 	partnerID, err := strconv.ParseInt(partnerIDStr, 10, 64)
 	if err != nil {
-		b.answerCallback(cq.ID, "Bad id")
+		b.answerCallback(cq.ID, t(UILangEn, "err_bad_id"))
 		return
 	}
 	u, ok := b.storage.Get(cq.From.ID)
 	if !ok {
-		b.answerCallback(cq.ID, "Please /start first")
+		b.answerCallback(cq.ID, t(UILangEn, "err_please_start"))
 		return
 	}
+	lang := u.Lang()
 	if u.PartnerID != partnerID || u.State != StateInChat {
-		b.answerCallback(cq.ID, "Chat already ended")
+		b.answerCallback(cq.ID, t(lang, "msg_chat_already_ended"))
 		return
 	}
 	// Convert coffee chat into a regular chat.
@@ -830,9 +860,18 @@ func (b *Bot) onContinueAction(cq *tgbotapi.CallbackQuery, partnerIDStr string) 
 		})
 		_ = p
 	}
-	b.answerCallback(cq.ID, "Continuing!")
-	b.sendText(cq.Message.Chat.ID, "✅ Continuing the chat — no more timer.", chatKeyboard, false)
-	b.sendText(partnerID, "✅ Continuing the chat — no more timer.", chatKeyboard, false)
+	b.answerCallback(cq.ID, t(lang, "msg_continuing"))
+	b.sendText(cq.Message.Chat.ID, t(lang, "msg_continuing_no_timer"), chatKeyboard(lang), false)
+	pLang := b.partnerLang(partnerID)
+	b.sendText(partnerID, t(pLang, "msg_continuing_no_timer"), chatKeyboard(pLang), false)
+}
+
+// partnerLang fetches a user's Lang() safely.
+func (b *Bot) partnerLang(id int64) string {
+	if u, ok := b.storage.Get(id); ok {
+		return u.Lang()
+	}
+	return UILangEn
 }
 
 // onRateAction handles a star-rating tap or "skip" from the rating prompt.
@@ -843,28 +882,33 @@ func (b *Bot) onRateAction(cq *tgbotapi.CallbackQuery, parts []string) {
 			x.PendingRatingFor = 0
 			x.State = StateIdle
 		})
-		b.answerCallback(cq.ID, "Skipped")
-		b.sendText(cq.Message.Chat.ID, "No problem — back to the main menu.", mainMenu, false)
+		u, _ := b.storage.Get(cq.From.ID)
+		lang := UILangEn
+		if u != nil {
+			lang = u.Lang()
+		}
+		b.answerCallback(cq.ID, t(lang, "msg_skipped"))
+		b.sendText(cq.Message.Chat.ID, t(lang, "msg_no_problem_menu"), mainMenu(lang), false)
 		return
 	}
 	if len(parts) < 3 {
-		b.answerCallback(cq.ID, "Bad rating")
+		b.answerCallback(cq.ID, t(UILangEn, "err_bad_rating"))
 		return
 	}
 	partnerID, err1 := strconv.ParseInt(parts[1], 10, 64)
 	stars, err2 := strconv.Atoi(parts[2])
 	if err1 != nil || err2 != nil || stars < 1 || stars > 5 {
-		b.answerCallback(cq.ID, "Bad rating")
+		b.answerCallback(cq.ID, t(UILangEn, "err_bad_rating"))
 		return
 	}
 
 	u, ok := b.storage.Get(cq.From.ID)
 	if !ok || u.PendingRatingFor != partnerID {
-		b.answerCallback(cq.ID, "Already rated or chat ended")
+		b.answerCallback(cq.ID, t(UILangEn, "err_already_rated"))
 		return
 	}
+	lang := u.Lang()
 
-	// Record on the rater (RatedBy is for stats; not strictly needed here).
 	// The rating is stored on the partner.
 	var newAch []Achievement
 	b.storage.WithUser(partnerID, func(x *User) {
@@ -885,16 +929,17 @@ func (b *Bot) onRateAction(cq *tgbotapi.CallbackQuery, parts []string) {
 		x.State = StateIdle
 	})
 
-	b.answerCallback(cq.ID, fmt.Sprintf("Rated %d ⭐", stars))
+	b.answerCallback(cq.ID, tf(lang, "fmt_rated_stars", stars))
 	edit := tgbotapi.NewEditMessageText(cq.Message.Chat.ID, cq.Message.MessageID,
-		fmt.Sprintf("✅ You rated your partner %d ⭐", stars))
+		tf(lang, "fmt_you_rated", stars))
 	b.send(edit)
-	b.sendText(cq.Message.Chat.ID, "Thanks for the feedback!", mainMenu, false)
+	b.sendText(cq.Message.Chat.ID, t(lang, "msg_thanks_feedback"), mainMenu(lang), false)
 
+	pLang := b.partnerLang(partnerID)
 	for _, a := range newAch {
 		b.sendText(partnerID,
-			"🎉 Achievement unlocked!\n"+a.Emoji+" *"+a.Title+"* — "+a.Description,
-			mainMenu, true)
+			tf(pLang, "msg_achievement_unlocked", a.Emoji, achTitle(pLang, a.ID), achDesc(pLang, a.ID)),
+			mainMenu(pLang), true)
 	}
 }
 
@@ -907,16 +952,17 @@ func (b *Bot) onMenuReport(msg *tgbotapi.Message) {
 	if !ok || u.State != StateInChat || u.PartnerID == 0 {
 		return
 	}
+	lang := u.Lang()
 	partner, ok := b.storage.Get(u.PartnerID)
 	if !ok {
 		return
 	}
 	b.sendText(msg.Chat.ID,
-		fmt.Sprintf("🚩 Report %s for bad behavior?",
-			shortName(partner)),
+		tf(lang, "fmt_report_confirm", shortName(partner, lang)),
 		confirmKeyboard(
 			fmt.Sprintf("report:confirm:%d", u.PartnerID),
 			"endchat",
+			lang,
 		), false)
 }
 
@@ -925,51 +971,52 @@ func (b *Bot) onMenuBlock(msg *tgbotapi.Message) {
 	if !ok || u.State != StateInChat || u.PartnerID == 0 {
 		return
 	}
+	lang := u.Lang()
 	partner, ok := b.storage.Get(u.PartnerID)
 	if !ok {
 		return
 	}
 	b.sendText(msg.Chat.ID,
-		fmt.Sprintf("🚫 Block %s? You won't see them in future searches.",
-			shortName(partner)),
+		tf(lang, "fmt_block_confirm", shortName(partner, lang)),
 		confirmKeyboard(
 			fmt.Sprintf("block:confirm:%d", u.PartnerID),
 			"endchat",
+			lang,
 		), false)
 }
 
 func (b *Bot) handleConfirm(cq *tgbotapi.CallbackQuery, parts []string) {
 	if len(parts) < 3 {
-		b.answerCallback(cq.ID, "Bad request")
+		b.answerCallback(cq.ID, t(UILangEn, "err_bad_request"))
 		return
 	}
 	action, targetStr := parts[0], parts[2]
 	target, err := strconv.ParseInt(targetStr, 10, 64)
 	if err != nil {
-		b.answerCallback(cq.ID, "Bad id")
+		b.answerCallback(cq.ID, t(UILangEn, "err_bad_id"))
 		return
 	}
 	u, ok := b.storage.Get(cq.From.ID)
 	if !ok {
-		b.answerCallback(cq.ID, "Please /start first")
+		b.answerCallback(cq.ID, t(UILangEn, "err_please_start"))
 		return
 	}
+	lang := u.Lang()
 
 	switch action {
 	case "report":
 		count := b.storage.IncrementReport(target)
-		b.answerCallback(cq.ID, "Reported")
+		b.answerCallback(cq.ID, t(lang, "msg_reported"))
 		edit := tgbotapi.NewEditMessageText(cq.Message.Chat.ID, cq.Message.MessageID,
-			"🚩 Thanks — we'll review it.")
+			t(lang, "msg_reported"))
 		b.send(edit)
 		if count >= ReportThreshold {
 			b.storage.WithUser(target, func(x *User) {
 				x.SuspendedUntil = time.Now().Add(SuspendDuration)
 			})
 			b.sendText(target,
-				"⏸ You've been temporarily suspended for 24h due to multiple reports. "+
-					"You can still browse, but you won't appear in others' results.",
-				mainMenu, false)
+				t(b.partnerLang(target), "msg_suspended"),
+				mainMenu(b.partnerLang(target)), false)
 		}
 		// End the chat for both sides.
 		b.endChat(u.ID, cq.Message.Chat.ID, true)
@@ -981,14 +1028,14 @@ func (b *Bot) handleConfirm(cq *tgbotapi.CallbackQuery, parts []string) {
 			}
 			x.Blocks[target] = true
 		})
-		b.answerCallback(cq.ID, "Blocked")
+		b.answerCallback(cq.ID, t(lang, "msg_blocked"))
 		edit := tgbotapi.NewEditMessageText(cq.Message.Chat.ID, cq.Message.MessageID,
-			"🚫 User blocked.")
+			t(lang, "msg_blocked"))
 		b.send(edit)
 		b.endChat(u.ID, cq.Message.Chat.ID, true)
 
 	default:
-		b.answerCallback(cq.ID, "Unknown action")
+		b.answerCallback(cq.ID, t(lang, "err_unknown_action"))
 	}
 }
 
@@ -998,68 +1045,84 @@ func (b *Bot) handleConfirm(cq *tgbotapi.CallbackQuery, parts []string) {
 
 func (b *Bot) showProfile(chatID int64, u *User) {
 	text := formatProfile(u)
-	b.sendText(chatID, text, profileKeyboard(), true)
+	b.sendText(chatID, text, profileKeyboard(u.Lang()), true)
 }
 
 func formatProfile(u *User) string {
-	name := shortName(u)
+	lang := u.Lang()
+	name := shortName(u, lang)
 	alias := u.Alias
 	if alias == "" {
-		alias = "_(not set)_"
+		alias = t(lang, "p_not_set")
 	}
 	bio := u.Bio
 	if bio == "" {
-		bio = "_(not set)_"
+		bio = t(lang, "p_not_set")
 	}
-	interests := "_(none)_"
+	interests := t(lang, "p_none")
 	if len(u.Interests) > 0 {
 		interests = strings.Join(u.SortedInterests(), ", ")
 	}
-	lang := u.Language
-	if lang == "" {
-		lang = "_(not set — chat will not be translated)_"
-	} else if name, ok := SupportedLanguages[lang]; ok {
-		lang = name
+	langLabel := u.Language
+	if langLabel == "" {
+		langLabel = t(lang, "p_not_set_lang")
+	} else if name, ok := SupportedLanguages[langLabel]; ok {
+		langLabel = name
 	}
-	wake := "_(not set — always shown)_"
+	wake := t(lang, "p_not_set_wake")
 	if u.Timezone != "" {
-		wake = fmt.Sprintf("`%02d:00 - %02d:00` (%s)", u.WakeFrom, u.WakeTo, u.Timezone)
+		wake = tf(lang, "fmt_p_wake_detail", u.WakeFrom, u.WakeTo, u.Timezone)
 	}
-	rating := "_(no ratings yet)_"
+	rating := t(lang, "p_no_ratings")
 	if u.RatingCount > 0 {
-		rating = fmt.Sprintf("%.1f ⭐ (%d reviews)", u.AverageRating(), u.RatingCount)
+		rating = tf(lang, "fmt_p_rating_detail", u.AverageRating(), u.RatingCount)
 	}
-	notify := "off"
+	notify := t(lang, "p_off")
 	if u.NotifyWhenNearby {
-		notify = fmt.Sprintf("on, within %.0f km", u.NotifyRadius)
+		notify = tf(lang, "fmt_p_on", u.NotifyRadius)
 	}
 
 	return fmt.Sprintf(
-		"👤 *Your profile*\n\n"+
-			"📛 *Name:* %s\n"+
-			"🎭 *Alias:* %s\n"+
-			"📝 *Bio:* %s\n"+
-			"🏷️ *Interests:* %s\n"+
-			"🌐 *Language:* %s\n"+
-			"⏰ *Wake hours:* %s\n"+
-			"⭐ *Rating:* %s\n"+
-			"🔔 *Notifications:* %s",
-		name, alias, bio, interests, lang, wake, rating, notify)
+		"%s\n\n"+
+			"%s %s\n"+
+			"%s %s\n"+
+			"%s %s\n"+
+			"%s %s\n"+
+			"%s %s\n"+
+			"%s %s\n"+
+			"%s %s\n"+
+			"%s %s",
+		t(lang, "p_your_profile"),
+		t(lang, "p_name"), name,
+		t(lang, "p_alias"), alias,
+		t(lang, "p_bio"), bio,
+		t(lang, "p_interests"), interests,
+		t(lang, "p_language"), langLabel,
+		t(lang, "p_wake_hours"), wake,
+		t(lang, "p_rating"), rating,
+		t(lang, "p_notifications"), notify)
 }
 
 func (b *Bot) onProfileAction(cq *tgbotapi.CallbackQuery, action string) {
+	u, ok := b.storage.Get(cq.From.ID)
+	if !ok {
+		b.answerCallback(cq.ID, t(UILangEn, "err_please_start"))
+		return
+	}
+	lang := u.Lang()
+
 	switch action {
 	case "alias":
 		b.storage.WithUser(cq.From.ID, func(x *User) { x.State = StateNeedAlias })
 		b.answerCallback(cq.ID, "")
 		b.sendText(cq.Message.Chat.ID,
-			"📛 Send me your alias (max 32 chars), or /skip:", nil, false)
+			t(lang, "msg_alias_prompt"), nil, false)
 
 	case "bio":
 		b.storage.WithUser(cq.From.ID, func(x *User) { x.State = StateNeedBio })
 		b.answerCallback(cq.ID, "")
 		b.sendText(cq.Message.Chat.ID,
-			"📝 Send me a short bio (max 200 chars), or /skip:", nil, false)
+			t(lang, "msg_bio_prompt"), nil, false)
 
 	case "interests":
 		u, _ := b.storage.Get(cq.From.ID)
@@ -1070,41 +1133,42 @@ func (b *Bot) onProfileAction(cq *tgbotapi.CallbackQuery, action string) {
 			page = len(u.Interests) / 12
 		}
 		b.sendText(cq.Message.Chat.ID,
-			"🏷️ Tap tags to toggle, then press *Done*:",
+			t(lang, "msg_interests_prompt"),
 			interestsKeyboard(interestSet(u.Interests), page), true)
 
 	case "photo":
 		b.storage.WithUser(cq.From.ID, func(x *User) { x.State = StateNeedPhoto })
 		b.answerCallback(cq.ID, "")
 		b.sendText(cq.Message.Chat.ID,
-			"🖼️ Send me a profile photo, or /skip:", nil, false)
+			t(lang, "msg_photo_prompt"), nil, false)
 
 	default:
-		b.answerCallback(cq.ID, "Unknown profile action")
+		b.answerCallback(cq.ID, t(lang, "err_unknown_profile_action"))
 	}
 }
 
 func (b *Bot) onInterestAction(cq *tgbotapi.CallbackQuery, parts []string) {
 	if len(parts) < 2 {
-		b.answerCallback(cq.ID, "Bad request")
+		b.answerCallback(cq.ID, t(UILangEn, "err_bad_request"))
 		return
 	}
 	u, ok := b.storage.Get(cq.From.ID)
 	if !ok {
-		b.answerCallback(cq.ID, "Please /start first")
+		b.answerCallback(cq.ID, t(UILangEn, "err_please_start"))
 		return
 	}
+	lang := u.Lang()
 
 	selected := interestSet(u.Interests)
 	switch parts[1] {
 	case "toggle":
 		if len(parts) < 3 {
-			b.answerCallback(cq.ID, "Bad tag")
+			b.answerCallback(cq.ID, t(lang, "err_bad_tag"))
 			return
 		}
 		tag := parts[2]
 		if !validInterest(tag) {
-			b.answerCallback(cq.ID, "Bad tag")
+			b.answerCallback(cq.ID, t(lang, "err_bad_tag"))
 			return
 		}
 		if selected[tag] {
@@ -1113,7 +1177,6 @@ func (b *Bot) onInterestAction(cq *tgbotapi.CallbackQuery, parts []string) {
 			selected[tag] = true
 		}
 		var newList []string
-		// Preserve stable order from AllInterests.
 		for _, t := range AllInterests {
 			if selected[t] {
 				newList = append(newList, t)
@@ -1121,7 +1184,6 @@ func (b *Bot) onInterestAction(cq *tgbotapi.CallbackQuery, parts []string) {
 		}
 		b.storage.WithUser(u.ID, func(x *User) { x.Interests = newList })
 		b.answerCallback(cq.ID, "")
-		// Refresh the message.
 		edit := tgbotapi.NewEditMessageReplyMarkup(cq.Message.Chat.ID, cq.Message.MessageID,
 			interestsKeyboard(selected, 0))
 		b.send(edit)
@@ -1129,7 +1191,7 @@ func (b *Bot) onInterestAction(cq *tgbotapi.CallbackQuery, parts []string) {
 	case "page":
 		page, err := strconv.Atoi(parts[2])
 		if err != nil {
-			b.answerCallback(cq.ID, "Bad page")
+			b.answerCallback(cq.ID, t(lang, "err_bad_page"))
 			return
 		}
 		b.answerCallback(cq.ID, "")
@@ -1139,25 +1201,26 @@ func (b *Bot) onInterestAction(cq *tgbotapi.CallbackQuery, parts []string) {
 
 	case "done":
 		b.storage.WithUser(u.ID, func(x *User) { x.State = StateIdle })
-		b.answerCallback(cq.ID, "Saved!")
-		b.sendText(cq.Message.Chat.ID, "✅ Interests saved.", mainMenu, false)
+		b.answerCallback(cq.ID, t(lang, "msg_saved"))
+		b.sendText(cq.Message.Chat.ID, t(lang, "msg_interests_saved"), mainMenu(lang), false)
 
 	case "clear":
 		b.storage.WithUser(u.ID, func(x *User) { x.Interests = nil })
-		b.answerCallback(cq.ID, "Cleared")
+		b.answerCallback(cq.ID, t(lang, "msg_saved"))
 		edit := tgbotapi.NewEditMessageReplyMarkup(cq.Message.Chat.ID, cq.Message.MessageID,
 			interestsKeyboard(map[string]bool{}, 0))
 		b.send(edit)
 
 	default:
-		b.answerCallback(cq.ID, "Unknown interest action")
+		b.answerCallback(cq.ID, t(lang, "err_unknown_interest_action"))
 	}
 }
 
-// handleStatefulInput handles StateNeedPhoto.
+// handlePhotoInput handles StateNeedPhoto.
 func (b *Bot) handlePhotoInput(msg *tgbotapi.Message, u *User) {
+	lang := u.Lang()
 	if len(msg.Photo) == 0 {
-		b.sendText(msg.Chat.ID, "Please send a photo, or /skip.", nil, false)
+		b.sendText(msg.Chat.ID, t(lang, "msg_send_photo_or_skip"), nil, false)
 		return
 	}
 	best := msg.Photo[len(msg.Photo)-1]
@@ -1165,7 +1228,7 @@ func (b *Bot) handlePhotoInput(msg *tgbotapi.Message, u *User) {
 		x.PhotoID = best.FileID
 		x.State = StateIdle
 	})
-	b.sendText(msg.Chat.ID, "✅ Profile photo updated.", mainMenu, false)
+	b.sendText(msg.Chat.ID, t(lang, "msg_photo_updated"), mainMenu(lang), false)
 }
 
 // ---------------------------------------------------------------------------
@@ -1173,23 +1236,52 @@ func (b *Bot) handlePhotoInput(msg *tgbotapi.Message, u *User) {
 // ---------------------------------------------------------------------------
 
 func (b *Bot) onLanguagePick(cq *tgbotapi.CallbackQuery, code string) {
-	if _, ok := SupportedLanguages[code]; !ok {
-		b.answerCallback(cq.ID, "Bad language")
+	if !isValidUILang(code) {
+		b.answerCallback(cq.ID, t(UILangEn, "err_bad_language"))
 		return
 	}
+
+	u, ok := b.storage.Get(cq.From.ID)
+	if !ok {
+		b.answerCallback(cq.ID, t(code, "err_please_start"))
+		return
+	}
+
+	isInitial := u.State == StateNeedUILang
+
 	b.storage.WithUser(cq.From.ID, func(x *User) {
+		x.UILang = code
 		x.Language = code
-		x.State = StateIdle
+		if isInitial {
+			x.State = StateNeedLocation
+		} else {
+			x.State = StateIdle
+		}
 	})
-	b.answerCallback(cq.ID, "Saved!")
-	name := SupportedLanguages[code]
+
+	b.answerCallback(cq.ID, t(code, "msg_saved"))
+	name := UILangNames[code]
+
+	if isInitial {
+		// Show the intro + location request in the chosen language.
+		edit := tgbotapi.NewEditMessageText(cq.Message.Chat.ID, cq.Message.MessageID,
+			tf(code, "fmt_lang_set", name))
+		edit.ParseMode = "Markdown"
+		b.send(edit)
+		b.sendText(cq.Message.Chat.ID,
+			tf(code, "msg_start_intro", u.FirstName),
+			requestLocationKeyboard(code), true)
+		return
+	}
+
+	// Language changed by an already-registered user.
 	edit := tgbotapi.NewEditMessageText(cq.Message.Chat.ID, cq.Message.MessageID,
-		fmt.Sprintf("🌐 Language set to *%s*.", name))
+		tf(code, "fmt_lang_set", name))
 	edit.ParseMode = "Markdown"
 	b.send(edit)
 	b.sendText(cq.Message.Chat.ID,
-		"From now on, text chats with someone speaking a different language will be auto-translated.",
-		mainMenu, false)
+		t(code, "msg_lang_translation_info"),
+		mainMenu(code), false)
 }
 
 // ---------------------------------------------------------------------------
@@ -1197,43 +1289,54 @@ func (b *Bot) onLanguagePick(cq *tgbotapi.CallbackQuery, code string) {
 // ---------------------------------------------------------------------------
 
 func (b *Bot) startWakeHoursFlow(chatID int64, u *User) {
+	lang := u.Lang()
 	if u.Timezone == "" {
 		b.storage.WithUser(u.ID, func(x *User) { x.State = StateNeedTimezone })
 		b.sendText(chatID,
-			"🌍 First, pick your timezone:", timezoneKeyboard(), false)
+			t(lang, "msg_pick_timezone"), timezoneKeyboard(), false)
 		return
 	}
 	b.storage.WithUser(u.ID, func(x *User) { x.State = StateNeedWakeFrom })
 	b.sendText(chatID,
-		fmt.Sprintf("🌍 Timezone: *%s*\n\n"+
-			"Send the hour you usually wake up (0-23), or /skip to clear wake hours:",
-			u.Timezone), nil, true)
+		tf(lang, "fmt_timezone_set", u.Timezone), nil, true)
 }
 
 func (b *Bot) onTimezonePick(cq *tgbotapi.CallbackQuery, tz string) {
 	if _, err := time.LoadLocation(tz); err != nil {
-		b.answerCallback(cq.ID, "Bad timezone")
+		b.answerCallback(cq.ID, t(UILangEn, "err_bad_timezone"))
 		return
 	}
+	u, ok := b.storage.Get(cq.From.ID)
+	if !ok {
+		b.answerCallback(cq.ID, t(UILangEn, "err_please_start"))
+		return
+	}
+	lang := u.Lang()
 	b.storage.WithUser(cq.From.ID, func(x *User) {
 		x.Timezone = tz
 		x.State = StateNeedWakeFrom
 	})
-	b.answerCallback(cq.ID, "Saved")
+	b.answerCallback(cq.ID, t(lang, "msg_saved"))
 	edit := tgbotapi.NewEditMessageText(cq.Message.Chat.ID, cq.Message.MessageID,
-		fmt.Sprintf("🌍 Timezone: *%s*", tz))
+		tf(lang, "fmt_timezone_set", tz))
 	edit.ParseMode = "Markdown"
 	b.send(edit)
 	b.sendText(cq.Message.Chat.ID,
-		"Now send the hour you usually wake up (0-23):", nil, false)
+		t(lang, "msg_send_wake_from"), nil, false)
 }
 
 func (b *Bot) onWakePick(cq *tgbotapi.CallbackQuery, scope, val string) {
 	h, err := strconv.Atoi(val)
 	if err != nil || h < 0 || h > 23 {
-		b.answerCallback(cq.ID, "Bad hour")
+		b.answerCallback(cq.ID, t(UILangEn, "err_bad_hour"))
 		return
 	}
+	u, ok := b.storage.Get(cq.From.ID)
+	if !ok {
+		b.answerCallback(cq.ID, t(UILangEn, "err_please_start"))
+		return
+	}
+	lang := u.Lang()
 	switch scope {
 	case "from":
 		b.storage.WithUser(cq.From.ID, func(x *User) {
@@ -1242,7 +1345,7 @@ func (b *Bot) onWakePick(cq *tgbotapi.CallbackQuery, scope, val string) {
 		})
 		b.answerCallback(cq.ID, fmt.Sprintf("Wake at %d", h))
 		b.sendText(cq.Message.Chat.ID,
-			fmt.Sprintf("Wake from *%02d:00*. Now send the hour you go to sleep (0-23):", h),
+			tf(lang, "fmt_wake_from_set", h),
 			nil, true)
 	case "to":
 		var wakeFrom int
@@ -1253,10 +1356,10 @@ func (b *Bot) onWakePick(cq *tgbotapi.CallbackQuery, scope, val string) {
 		})
 		b.answerCallback(cq.ID, fmt.Sprintf("Sleep at %d", h))
 		b.sendText(cq.Message.Chat.ID,
-			fmt.Sprintf("✅ Wake hours: *%02d:00 - %02d:00*", wakeFrom, h),
-			mainMenu, true)
+			tf(lang, "fmt_wake_hours_set", wakeFrom, h),
+			mainMenu(lang), true)
 	default:
-		b.answerCallback(cq.ID, "Unknown")
+		b.answerCallback(cq.ID, t(lang, "err_unknown"))
 	}
 }
 
@@ -1265,31 +1368,38 @@ func (b *Bot) onWakePick(cq *tgbotapi.CallbackQuery, scope, val string) {
 // ---------------------------------------------------------------------------
 
 func (b *Bot) toggleNotifications(u *User, chatID int64) {
+	lang := u.Lang()
 	if u.Latitude == 0 && u.Longitude == 0 {
-		b.sendText(chatID, "Share your location first.", requestLocationKeyboard, false)
+		b.sendText(chatID, t(lang, "msg_share_location_for_notify"), requestLocationKeyboard(lang), false)
 		return
 	}
 	if u.NotifyWhenNearby {
 		b.storage.WithUser(u.ID, func(x *User) {
 			x.NotifyWhenNearby = false
 		})
-		b.sendText(chatID, "🔕 Notifications disabled.", mainMenu, false)
+		b.sendText(chatID, t(lang, "msg_notifications_disabled"), mainMenu(lang), false)
 		return
 	}
 	b.storage.WithUser(u.ID, func(x *User) {
 		x.State = StateNeedNotifyRadius
 	})
 	b.sendText(chatID,
-		"🔔 *Get notified when someone new joins nearby.*\nPick a radius:",
+		t(lang, "msg_notify_prompt"),
 		notifyRadiusKeyboard(), true)
 }
 
 func (b *Bot) onNotifyRadiusPick(cq *tgbotapi.CallbackQuery, raw string) {
 	r, err := strconv.ParseFloat(raw, 64)
 	if err != nil {
-		b.answerCallback(cq.ID, "Bad radius")
+		b.answerCallback(cq.ID, t(UILangEn, "err_bad_radius"))
 		return
 	}
+	u, ok := b.storage.Get(cq.From.ID)
+	if !ok {
+		b.answerCallback(cq.ID, t(UILangEn, "err_please_start"))
+		return
+	}
+	lang := u.Lang()
 	b.storage.WithUser(cq.From.ID, func(x *User) {
 		x.NotifyWhenNearby = true
 		x.NotifyRadius = r
@@ -1298,19 +1408,19 @@ func (b *Bot) onNotifyRadiusPick(cq *tgbotapi.CallbackQuery, raw string) {
 	})
 	b.answerCallback(cq.ID, fmt.Sprintf("%.0f km", r))
 	edit := tgbotapi.NewEditMessageText(cq.Message.Chat.ID, cq.Message.MessageID,
-		fmt.Sprintf("🔔 You'll be notified when someone joins within %.0f km.", r))
+		tf(lang, "fmt_notify_set", r))
 	b.send(edit)
 	b.sendText(cq.Message.Chat.ID,
-		"You can turn this off any time from the menu.", mainMenu, false)
+		t(lang, "msg_notify_turn_off"), mainMenu(lang), false)
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-func shortName(u *User) string {
+func shortName(u *User, lang string) string {
 	if u == nil {
-		return "Stranger"
+		return t(lang, "label_stranger")
 	}
 	if u.Alias != "" {
 		return u.Alias
@@ -1321,19 +1431,19 @@ func shortName(u *User) string {
 	if u.Username != "" {
 		return "@" + u.Username
 	}
-	return "Stranger"
+	return t(lang, "label_stranger")
 }
 
-func prettyGender(g string) string {
+func prettyGender(g, lang string) string {
 	switch g {
 	case GenderMale:
-		return "Male"
+		return t(lang, "label_male")
 	case GenderFemale:
-		return "Female"
+		return t(lang, "label_female")
 	case GenderAny:
-		return "Both / Any"
+		return t(lang, "label_both")
 	default:
-		return "Unknown"
+		return t(lang, "label_unknown_gender")
 	}
 }
 
@@ -1358,8 +1468,8 @@ func formatDistance(km float64) string {
 	return fmt.Sprintf("%.0f km", km)
 }
 
-func formatMatchLabel(c *User, dist float64) string {
-	name := shortName(c)
+func formatMatchLabel(c *User, dist float64, lang string) string {
+	name := shortName(c, lang)
 	parts := []string{
 		name,
 		formatDistance(dist),
@@ -1380,8 +1490,8 @@ func formatMatchLabel(c *User, dist float64) string {
 
 func interestSet(s []string) map[string]bool {
 	out := make(map[string]bool, len(s))
-	for _, t := range s {
-		out[t] = true
+	for _, tag := range s {
+		out[tag] = true
 	}
 	return out
 }

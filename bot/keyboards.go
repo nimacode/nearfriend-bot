@@ -8,64 +8,85 @@ import (
 )
 
 // mainMenu is the persistent keyboard for a fully-registered user.
-var mainMenu = tgbotapi.NewReplyKeyboard(
-	tgbotapi.NewKeyboardButtonRow(
-		tgbotapi.NewKeyboardButton("👤 My profile"),
-		tgbotapi.NewKeyboardButton("🚻 Set my gender"),
-	),
-	tgbotapi.NewKeyboardButtonRow(
-		tgbotapi.NewKeyboardButton("📍 Update my location"),
-	),
-	tgbotapi.NewKeyboardButtonRow(
-		tgbotapi.NewKeyboardButton("🔍 Find nearby friends"),
-		tgbotapi.NewKeyboardButton("☕ Coffee chat (15 min)"),
-	),
-	tgbotapi.NewKeyboardButtonRow(
-		tgbotapi.NewKeyboardButton("🌐 Language"),
-		tgbotapi.NewKeyboardButton("⏰ Wake hours"),
-	),
-	tgbotapi.NewKeyboardButtonRow(
-		tgbotapi.NewKeyboardButton("🔔 Notify me"),
-		tgbotapi.NewKeyboardButton("🏆 Achievements"),
-	),
-	tgbotapi.NewKeyboardButtonRow(
-		tgbotapi.NewKeyboardButton("❌ End chat"),
-	),
-)
+func mainMenu(lang string) tgbotapi.ReplyKeyboardMarkup {
+	return tgbotapi.NewReplyKeyboard(
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton(t(lang, "btn_profile")),
+			tgbotapi.NewKeyboardButton(t(lang, "btn_set_gender")),
+		),
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton(t(lang, "btn_update_location")),
+		),
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton(t(lang, "btn_find_nearby")),
+			tgbotapi.NewKeyboardButton(t(lang, "btn_coffee_chat")),
+		),
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton(t(lang, "btn_language")),
+			tgbotapi.NewKeyboardButton(t(lang, "btn_wake_hours")),
+		),
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton(t(lang, "btn_notify")),
+			tgbotapi.NewKeyboardButton(t(lang, "btn_achievements")),
+		),
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton(t(lang, "btn_end_chat")),
+		),
+	)
+}
 
 // chatKeyboard is shown while a chat is active.
-var chatKeyboard = tgbotapi.NewReplyKeyboard(
-	tgbotapi.NewKeyboardButtonRow(
-		tgbotapi.NewKeyboardButton("❌ End chat"),
-	),
-	tgbotapi.NewKeyboardButtonRow(
-		tgbotapi.NewKeyboardButton("🚫 Block"),
-		tgbotapi.NewKeyboardButton("🚩 Report"),
-	),
-)
+func chatKeyboard(lang string) tgbotapi.ReplyKeyboardMarkup {
+	return tgbotapi.NewReplyKeyboard(
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton(t(lang, "btn_end_chat")),
+		),
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton(t(lang, "btn_block")),
+			tgbotapi.NewKeyboardButton(t(lang, "btn_report")),
+		),
+	)
+}
 
 // requestLocationKeyboard asks the user to share their Telegram location.
-var requestLocationKeyboard = tgbotapi.NewReplyKeyboard(
-	tgbotapi.NewKeyboardButtonRow(
-		tgbotapi.KeyboardButton{Text: "📎 Share my location", RequestLocation: true},
-	),
-)
+func requestLocationKeyboard(lang string) tgbotapi.ReplyKeyboardMarkup {
+	return tgbotapi.NewReplyKeyboard(
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.KeyboardButton{
+				Text:            t(lang, "btn_share_location"),
+				RequestLocation: true,
+			},
+		),
+	)
+}
+
+// uiLangKeyboard shows the 3 UI language options (used at /start and
+// when changing language later).
+func uiLangKeyboard() tgbotapi.InlineKeyboardMarkup {
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, code := range ValidUILangs {
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(UILangNames[code], "lang:"+code),
+		))
+	}
+	return tgbotapi.NewInlineKeyboardMarkup(rows...)
+}
 
 // genderKeyboard is used for both self-gender and search-gender prompts.
-func genderKeyboard(prefix string) tgbotapi.InlineKeyboardMarkup {
+func genderKeyboard(lang, prefix string) tgbotapi.InlineKeyboardMarkup {
 	return tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("👨 Male", prefix+":male"),
-			tgbotapi.NewInlineKeyboardButtonData("👩 Female", prefix+":female"),
+			tgbotapi.NewInlineKeyboardButtonData(t(lang, "btn_male"), prefix+":male"),
+			tgbotapi.NewInlineKeyboardButtonData(t(lang, "btn_female"), prefix+":female"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🌐 Both / Any", prefix+":both"),
+			tgbotapi.NewInlineKeyboardButtonData(t(lang, "btn_both"), prefix+":both"),
 		),
 	)
 }
 
 // radiusKeyboard lets the user pick a search radius.
-func radiusKeyboard() tgbotapi.InlineKeyboardMarkup {
+func radiusKeyboard(lang string) tgbotapi.InlineKeyboardMarkup {
 	btn := func(label, val string) tgbotapi.InlineKeyboardButton {
 		return tgbotapi.NewInlineKeyboardButtonData(label, "radius:"+val)
 	}
@@ -77,17 +98,17 @@ func radiusKeyboard() tgbotapi.InlineKeyboardMarkup {
 }
 
 // profileKeyboard shows the profile menu.
-func profileKeyboard() tgbotapi.InlineKeyboardMarkup {
+func profileKeyboard(lang string) tgbotapi.InlineKeyboardMarkup {
 	return tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("✏️ Edit alias", "profile:alias"),
-			tgbotapi.NewInlineKeyboardButtonData("📝 Edit bio", "profile:bio"),
+			tgbotapi.NewInlineKeyboardButtonData(t(lang, "btn_edit_alias"), "profile:alias"),
+			tgbotapi.NewInlineKeyboardButtonData(t(lang, "btn_edit_bio"), "profile:bio"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🏷️ Edit interests", "profile:interests"),
+			tgbotapi.NewInlineKeyboardButtonData(t(lang, "btn_edit_interests"), "profile:interests"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🖼️ Set photo", "profile:photo"),
+			tgbotapi.NewInlineKeyboardButtonData(t(lang, "btn_set_photo"), "profile:photo"),
 		),
 	)
 }
@@ -139,23 +160,6 @@ func interestsKeyboard(selected map[string]bool, page int) tgbotapi.InlineKeyboa
 	return tgbotapi.NewInlineKeyboardMarkup(rows...)
 }
 
-// languageKeyboard returns the language picker. 4 per row.
-func languageKeyboard() tgbotapi.InlineKeyboardMarkup {
-	// Stable order: en, fa, tr, de, fr, es, ar, ru, zh, ja, ko, it, pt, hi, nl
-	order := []string{"en", "fa", "tr", "de", "fr", "es", "ar", "ru", "zh", "ja", "ko", "it", "pt", "hi", "nl"}
-	var rows [][]tgbotapi.InlineKeyboardButton
-	for i := 0; i < len(order); i += 2 {
-		var row []tgbotapi.InlineKeyboardButton
-		for j := 0; j < 2 && i+j < len(order); j++ {
-			code := order[i+j]
-			name, _ := SupportedLanguages[code]
-			row = append(row, tgbotapi.NewInlineKeyboardButtonData(name, "lang:"+code))
-		}
-		rows = append(rows, row)
-	}
-	return tgbotapi.NewInlineKeyboardMarkup(rows...)
-}
-
 // timezoneKeyboard returns the timezone picker. 2 per row.
 func timezoneKeyboard() tgbotapi.InlineKeyboardMarkup {
 	var rows [][]tgbotapi.InlineKeyboardButton
@@ -194,23 +198,23 @@ func ratingKeyboard(partnerID int64) tgbotapi.InlineKeyboardMarkup {
 }
 
 // continueKeyboard is shown when a coffee chat timer expires.
-func continueKeyboard(partnerID int64, _ bool) tgbotapi.InlineKeyboardMarkup {
+func continueKeyboard(partnerID int64, lang string) tgbotapi.InlineKeyboardMarkup {
 	return tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(
-				"✅ Keep chatting", fmt.Sprintf("continue:%d", partnerID)),
+				t(lang, "btn_keep_chatting"), fmt.Sprintf("continue:%d", partnerID)),
 			tgbotapi.NewInlineKeyboardButtonData(
-				"❌ End here", fmt.Sprintf("endhere:%d", partnerID)),
+				t(lang, "btn_end_here"), fmt.Sprintf("endhere:%d", partnerID)),
 		),
 	)
 }
 
 // confirmKeyboard is a Yes/No confirmation.
-func confirmKeyboard(yes, no string) tgbotapi.InlineKeyboardMarkup {
+func confirmKeyboard(yes, no, lang string) tgbotapi.InlineKeyboardMarkup {
 	return tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("✅ Yes", yes),
-			tgbotapi.NewInlineKeyboardButtonData("❌ No", no),
+			tgbotapi.NewInlineKeyboardButtonData(t(lang, "btn_yes"), yes),
+			tgbotapi.NewInlineKeyboardButtonData(t(lang, "btn_no"), no),
 		),
 	)
 }

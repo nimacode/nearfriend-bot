@@ -456,7 +456,7 @@ func TestFormatDistance(t *testing.T) {
 
 func TestFormatMatchLabel(t *testing.T) {
 	c := &User{FirstName: "Ali", Interests: []string{"code", "books"}, Gender: GenderMale}
-	got := formatMatchLabel(c, 5)
+	got := formatMatchLabel(c, 5, UILangEn)
 	if got == "" {
 		t.Error("formatMatchLabel should return non-empty")
 	}

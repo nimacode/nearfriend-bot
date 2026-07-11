@@ -13,7 +13,8 @@ type State int
 
 const (
 	StateIdle             State = iota // registered, waiting for a menu choice
-	StateNeedLocation                  // just /start'd, waiting for location share
+	StateNeedUILang                    // just /start'd, waiting for UI language pick
+	StateNeedLocation                  // language chosen, waiting for location share
 	StateNeedGender                    // location received, waiting for self gender
 	StateNeedSearchGender              // in "find nearby" flow, waiting for who they want
 	StateNeedRadius                    // in "find nearby" flow, waiting for distance
@@ -185,6 +186,9 @@ type User struct {
 	Bio       string
 	Interests []string
 	PhotoID   string
+
+	// UILang is the bot interface language (en, ru, fa).
+	UILang string
 
 	// Language for chat translation
 	Language string
@@ -438,6 +442,14 @@ func (u *User) AverageRating() float64 {
 // HasAchievement reports whether the user has unlocked the given ID.
 func (u *User) HasAchievement(id string) bool {
 	return u != nil && u.Achievements[id]
+}
+
+// Lang returns the user's UI language, defaulting to English.
+func (u *User) Lang() string {
+	if u == nil || u.UILang == "" {
+		return UILangEn
+	}
+	return u.UILang
 }
 
 // SortedInterests returns the user's interests sorted alphabetically.
